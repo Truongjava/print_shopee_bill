@@ -8,7 +8,6 @@ __pycache__/
 # ── PyInstaller build artifacts ──
 build/
 dist/
-*.spec
 
 # ── Portable distribution ──
 TTS_Bill_Portable/
