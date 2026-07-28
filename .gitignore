@@ -1,0 +1,44 @@
+# ── Dependencies ──
+node_modules/
+
+# ── Python cache ──
+__pycache__/
+*.pyc
+
+# ── PyInstaller build artifacts ──
+build/
+dist/
+*.spec
+
+# ── Portable distribution ──
+TTS_Bill_Portable/
+
+# ── Cookie / Session (CHỨA THÔNG TIN ĐĂNG NHẬP) ──
+banhang.shopee.vn_*.json
+seller-vn.tiktok.com_*.json
+
+# ── Upload PDF (dữ liệu đơn hàng thật) ──
+bill_calculate/uploads/
+outputs/
+outputs2/
+
+# ── Kết quả tính bill ──
+bill_calculate/outputs/
+
+# ── Dữ liệu kinh doanh thật ──
+mã combo.xlsx
+sp bán lẻ.xlsx
+
+# ── IDE / Claude ──
+.claude/
+
+# ── Portable zip ──
+*.zip
+
+# ── JS / Node (đã xóa, phòng tránh add lại) ──
+login.js
+package.json
+package-lock.json
+
+# ── File cũ không dùng nữa ──
+bill_calculate/app.py
