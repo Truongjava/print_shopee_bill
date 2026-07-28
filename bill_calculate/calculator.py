@@ -941,6 +941,8 @@ def export_xlsx_to_pdf(xlsx_path: str, pdf_path: str = '') -> str:
     if not pdf_path:
         pdf_path = xlsx_path.rsplit('.', 1)[0] + '.pdf'
 
+    excel = None
+    workbook = None
     try:
         pythoncom.CoInitialize()
         excel = win32com.client.Dispatch("Excel.Application")
@@ -950,14 +952,22 @@ def export_xlsx_to_pdf(xlsx_path: str, pdf_path: str = '') -> str:
         workbook = excel.Workbooks.Open(abs_xlsx)
         # 0 = xlTypePDF
         workbook.ExportAsFixedFormat(0, abs_pdf)
-        workbook.Close(False)
-        excel.Quit()
         print(f"   📄 Đã xuất PDF: {_os.path.basename(pdf_path)}")
         return pdf_path
     except Exception as e:
         print(f"   ⚠ Không thể xuất PDF từ Excel: {e}")
         return ''
     finally:
+        try:
+            if workbook is not None:
+                workbook.Close(False)
+        except Exception:
+            pass
+        try:
+            if excel is not None:
+                excel.Quit()
+        except Exception:
+            pass
         try:
             pythoncom.CoUninitialize()
         except Exception:

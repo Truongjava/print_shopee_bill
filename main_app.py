@@ -165,6 +165,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         cd = json.load(f)
     cookies_list = cd.get('cookies', cd if isinstance(cd, list) else [])
     pdf_files = []
+    carrier_counts: dict[str, int] = {}  # khởi tạo sớm, tránh NameError ở except
     carrier_label = f' [{carrier}]' if carrier else ''
     orders_url = CARRIER_URLS.get(carrier, ORDERS_URL)
     if stop_event is None:
@@ -579,7 +580,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                         try:
                             body = response.body()
                             if body and len(body) > 5000:
-                                bp = str(Path(output_dir) / f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
+                                bp = str(Path(output_dir) / f'Shopee_{carrier or "all"}_batch{batch_num}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
                                 with open(bp, 'wb') as f: f.write(body)
                                 downloaded_files.append(bp)
                                 log_cb(f'  💾 Network PDF: {Path(bp).name} ({len(body)//1024}KB)', 'ok')
@@ -588,7 +589,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 p.on('response', _on_response)
                 def _awb_dl(dl):
                     if downloaded_files: return
-                    bp = str(Path(output_dir) / (dl.suggested_filename or f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf'))
+                    bp = str(Path(output_dir) / (dl.suggested_filename or f'Shopee_{carrier or "all"}_batch{batch_num}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf'))
                     try:
                         dl.save_as(bp)
                         downloaded_files.append(bp)
@@ -634,6 +635,11 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
             log_cb('  ⏳ Đợi tab awbprint + PDF (tối đa 120 giây)...', 'dim')
             for _wait_i in range(60):
                 if downloaded_files: break
+                if stop_event and stop_event.is_set():
+                    log_cb('  ⏹ Đã dừng theo yêu cầu', 'warn')
+                    try: context.remove_listener('page', _awb_on_new_page)
+                    except: pass
+                    return all_batch_pdfs if all_batch_pdfs else pdf_files, playwright, browser, carrier_counts
                 if not new_page_ref:
                     for p in context.pages:
                         if p != page and not p.is_closed():
@@ -676,7 +682,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                     except: pass
                     awb_page.wait_for_timeout(5000)
                     try:
-                        save_path = str(Path(output_dir) / f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
+                        save_path = str(Path(output_dir) / f'Shopee_{carrier or "all"}_batch{batch_num}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
                         awb_page.pdf(path=save_path)
                         downloaded_files.append(save_path)
                         log_cb(f'  💾 page.pdf(): {Path(save_path).name}', 'ok')
@@ -847,20 +853,6 @@ class AutomationWorker(QObject):
                 tag = 'ok' if pdf_paths else 'warn'
                 self.log_message.emit(tag, f'📥 [{carrier_display}]: đã tải {len(pdf_paths)} file PDF')
 
-                # In shipping label TRƯỚC, rồi mới tính toán
-                if auto_print and pdf_paths:
-                    self.log_message.emit('info', f'🖨️ [{carrier_display}]: In shipping label...')
-                    for p in pdf_paths:
-                        name = Path(p).name
-                        if not (Path(p).exists() and ('shipping' in name.lower() or 'vận chuyển' in name.lower())):
-                            continue
-                        try:
-                            _print_file(str(p), printer, pdf_settings=pdf_settings, batch_size=batch_size,
-                                        log_cb=lambda m, t='': self.log_message.emit(t, m))
-                            self.log_message.emit('ok', f'  ✓ Đã gửi in: {Path(p).name}')
-                        except Exception as e:
-                            self.log_message.emit('err', f'  ✗ Lỗi in {Path(p).name}: {e}')
-
                 carrier_results = []
                 if pdf_paths:
                     self.log_message.emit('info', f'📊 Đang tính bill [{carrier_display}]...')
@@ -875,6 +867,18 @@ class AutomationWorker(QObject):
                                 self.log_message.emit('info', f'{lbl} {Path(fp).name}')
                                 self.result_file.emit(f'{lbl} {Path(fp).name}')
                     all_results.extend(carrier_results)
+
+                # In shipping label SAU khi calculator đã tách file
+                if auto_print and carrier_results:
+                    # Tìm file _shipping_label.pdf trong out_dir
+                    for f in Path(out_dir).glob('*_shipping_label*.pdf'):
+                        try:
+                            self.log_message.emit('info', f'🖨️ In shipping label: {f.name}')
+                            _print_file(str(f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
+                                        log_cb=lambda m, t='': self.log_message.emit(t, m))
+                            self.log_message.emit('ok', f'  ✓ Đã gửi in: {f.name}')
+                        except Exception as e:
+                            self.log_message.emit('err', f'  ✗ Lỗi in {f.name}: {e}')
 
                 # In báo cáo sau khi tính toán
                 if auto_print and carrier_results:
@@ -2792,12 +2796,10 @@ class App(QMainWindow):
         else:
             self._set_buttons("idle")
         if result:
-            for p in result.get('pdf_paths', []):
-                if Path(p).exists():
-                    self._add_result(p)
+            # PDF paths đã được thêm qua result_file signal trong worker — không thêm lại
             for r in result.get('results', []):
-                for key, lbl in [('excel', '📊'), ('pdf', '📕'), ('pdf_grouped', '📋')]:
-                    fp = r['files'].get(key)
+                for key, lbl in [('xlsx_report', '📊'), ('pdf_report', '📄')]:
+                    fp = r['files'].get(key) if isinstance(r.get('files'), dict) else None
                     if fp and Path(fp).exists():
                         self._add_result(fp, label=lbl)
 
