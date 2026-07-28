@@ -801,12 +801,11 @@ class AutomationWorker(QObject):
         self._running = True
         self._stop_event.clear()
 
-        # ── Resume support ──
-        resume_from = config.get('resume_from')  # None nếu chạy mới
-        all_pdf_paths = list(resume_from.get('pdf_files', [])) if resume_from else []
-        all_results = list(resume_from.get('results', [])) if resume_from else []
-        completed: set[str] = set(resume_from.get('completed_carriers', [])) if resume_from else set()
-        total_processed = resume_from.get('total_orders_processed', 0) if resume_from else 0
+        # ── Khởi tạo ──
+        all_pdf_paths = []
+        all_results = []
+        completed: set[str] = set()
+        total_processed = 0
 
         pw = None
         br = None
@@ -843,18 +842,7 @@ class AutomationWorker(QObject):
                     continue
 
                 if self._stop_event.is_set():
-                    self.log_message.emit('warn', '⏸ Đang lưu tiến trình...')
-                    _save_checkpoint(out_dir, {
-                        'date': datetime.now().strftime('%Y-%m-%d'),
-                        'output_dir': out_dir,
-                        'carriers_config': carriers,
-                        'completed_carriers': list(completed),
-                        'current_carrier': carrier,
-                        'pdf_files': all_pdf_paths,
-                        'results': all_results,
-                        'total_orders_processed': total_processed,
-                    })
-                    self.log_message.emit('warn', 'Đã dừng theo yêu cầu.');
+                    self.log_message.emit('warn', 'Đã dừng theo yêu cầu.')
                     break
 
                 carrier_display = carrier if carrier else 'tất cả'
@@ -934,22 +922,11 @@ class AutomationWorker(QObject):
                             except Exception as e:
                                 self.log_message.emit('err', f'  ✗ Lỗi in báo cáo: {e}')
 
-                # ── Đánh dấu carrier hoàn thành + save checkpoint ──
+                # ── Đánh dấu carrier hoàn thành ──
                 completed.add(carrier)
                 total_processed += count if count > 0 else 0
-                _save_checkpoint(out_dir, {
-                    'date': datetime.now().strftime('%Y-%m-%d'),
-                    'output_dir': out_dir,
-                    'carriers_config': carriers,
-                    'completed_carriers': list(completed),
-                    'current_carrier': None,
-                    'pdf_files': all_pdf_paths,
-                    'results': all_results,
-                    'total_orders_processed': total_processed,
-                })
 
-            # ── Tất cả carriers hoàn thành → xóa checkpoint ──
-            _delete_checkpoint(out_dir)
+            # ── Tất cả carriers hoàn thành ──
             self.log_message.emit('bold_ok', '🏁 HOÀN THÀNH!')
             self.state_changed.emit('done', f'✅ Hoàn thành lúc {datetime.now().strftime("%H:%M:%S")}')
             try:
@@ -968,20 +945,6 @@ class AutomationWorker(QObject):
         except Exception as e:
             self.log_message.emit('err', f'✗ Lỗi: {e}')
             self.state_changed.emit('error', f'✗ {e}')
-            # ── Lưu checkpoint khi crash ──
-            try:
-                _save_checkpoint(out_dir, {
-                    'date': datetime.now().strftime('%Y-%m-%d'),
-                    'output_dir': out_dir,
-                    'carriers_config': carriers,
-                    'completed_carriers': list(completed),
-                    'current_carrier': carrier if 'carrier' in dir() else None,
-                    'pdf_files': all_pdf_paths,
-                    'results': all_results,
-                    'total_orders_processed': total_processed,
-                })
-            except Exception:
-                pass  # Không ghi được checkpoint cũng không sao
             try:
                 if self._browser: self._browser.close()
             except Exception: pass
@@ -1006,67 +969,6 @@ class AutomationWorker(QObject):
         try:
             if self._playwright: self._playwright.stop()
         except: pass
-
-# ============================================================
-# CHECKPOINT / RESUME HELPERS (module-level, dùng chung cho
-# cả main thread và worker thread)
-# ============================================================
-CHECKPOINT_VERSION = 1
-
-def _checkpoint_path(output_dir: str) -> Path:
-    return Path(output_dir) / '_checkpoint.json'
-
-def _load_checkpoint(output_dir: str) -> dict | None:
-    """Đọc & validate checkpoint. Trả về None nếu không hợp lệ hoặc khác ngày."""
-    cp_path = _checkpoint_path(output_dir)
-    if not cp_path.exists():
-        return None
-    try:
-        data = json.loads(cp_path.read_text(encoding='utf-8'))
-    except (json.JSONDecodeError, OSError):
-        # Checkpoint hỏng → xóa để không hiện lại
-        try: cp_path.unlink()
-        except: pass
-        return None
-
-    # Validate version
-    if data.get('version') != CHECKPOINT_VERSION:
-        try: cp_path.unlink()
-        except: pass
-        return None
-
-    # Validate date (stale checkpoint)
-    cp_date = data.get('date', '')
-    today = datetime.now().strftime('%Y-%m-%d')
-    if cp_date != today:
-        # Khác ngày → stale, xóa
-        try: cp_path.unlink()
-        except: pass
-        return None
-
-    return data
-
-def _save_checkpoint(output_dir: str, data: dict):
-    """Ghi checkpoint atomic (tmp → rename)."""
-    cp_path = _checkpoint_path(output_dir)
-    data['version'] = CHECKPOINT_VERSION
-    data['timestamp'] = datetime.now().isoformat()
-    try:
-        os.makedirs(output_dir, exist_ok=True)
-        tmp_path = cp_path.with_suffix('.tmp')
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        tmp_path.replace(cp_path)  # Atomic rename
-    except OSError:
-        pass  # Không ảnh hưởng luồng chính
-
-def _delete_checkpoint(output_dir: str):
-    """Xóa checkpoint khi job hoàn thành."""
-    cp_path = _checkpoint_path(output_dir)
-    try:
-        if cp_path.exists():
-            cp_path.unlink()
-    except OSError:
-        pass
 
 _foxit_exe_cache = None
 
@@ -2980,38 +2882,6 @@ class App(QMainWindow):
         os.makedirs(out_dir, exist_ok=True)
         config['output_dir'] = out_dir  # Ghi đè = path có ngày
 
-        # ── Kiểm tra checkpoint (chỉ hiện dialog khi chạy thủ công) ──
-        checkpoint = _load_checkpoint(out_dir)
-        if checkpoint:
-            completed = checkpoint.get('completed_carriers', [])
-            remaining = [c for c in config['carriers'] if c[0] not in completed]
-            cp_time = checkpoint.get('timestamp', '?')
-            if len(cp_time) > 16:
-                cp_time = cp_time[:16].replace('T', ' ')
-
-            msg = (f"Phát hiện job dở dang từ {cp_time}\n\n"
-                   f"Đã hoàn thành: {', '.join(completed) if completed else '(chưa có)'}\n"
-                   f"Còn lại: {', '.join(c[0] for c in remaining) if remaining else '(không có)'}\n\n"
-                   f"Bạn muốn tiếp tục hay chạy mới?")
-
-            reply = QMessageBox.question(self, "📋 Phát hiện job dở dang", msg,
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-
-            if reply == QMessageBox.Yes:
-                config['resume_from'] = checkpoint
-                self._clear_results()
-                self._log_html('info', '📋 Tiếp tục job dở dang...')
-                # Hiện kết quả cũ trong list
-                for fp in checkpoint.get('pdf_files', []):
-                    if Path(fp).exists():
-                        self._add_result(fp)
-            else:
-                _delete_checkpoint(out_dir)
-                self._clear_results()
-                self._log_html('info', '🆕 Chạy mới — đã xóa checkpoint cũ')
-        else:
-            config['resume_from'] = None
-
         self.running = True
         self._set_buttons("running")
         self._clear_log()
@@ -3191,19 +3061,6 @@ class App(QMainWindow):
         out_dir = str(Path(base_dir) / today_str)
         os.makedirs(out_dir, exist_ok=True)
         config['output_dir'] = out_dir
-
-        # ── Auto-resume nếu có checkpoint (không hỏi, vì là scheduled) ──
-        checkpoint = _load_checkpoint(out_dir)
-        if checkpoint:
-            config['resume_from'] = checkpoint
-            completed = checkpoint.get('completed_carriers', [])
-            remaining = [c for c in config['carriers'] if c[0] not in completed]
-            self._log_html('info', f'📋 Tự động tiếp tục job dở dang ({len(completed)} carrier đã xong, {len(remaining)} còn lại)')
-            for fp in checkpoint.get('pdf_files', []):
-                if Path(fp).exists():
-                    self._add_result(fp)
-        else:
-            config['resume_from'] = None
 
         self.running = True
         self._clear_results()
