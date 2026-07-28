@@ -278,511 +278,436 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         except Exception:
             pass
 
-        # ── 1. Dismiss popup "Đã hiểu" ──
-        page.wait_for_timeout(10000)  # Đợi 10 giây
-        try:
-            dismissed = page.evaluate('''() => {
-                const buttons = document.querySelectorAll('button');
-                for (const btn of buttons) {
-                    const txt = btn.textContent.trim();
-                    if (txt === 'Đã hiểu' || txt === 'Bỏ qua' || txt === 'Skip') {
-                        btn.click();
-                        btn.dispatchEvent(new MouseEvent('click', {bubbles: true}));
-                        return txt;
-                    }
-                }
-                return '';
-            }''')
-            if dismissed:
-                log_cb(f'  ✓ Đã tắt popup "{dismissed}"', 'info')
-                page.wait_for_timeout(2000)
-        except Exception:
-            pass
+        # ════════════════════════════════════════════════════════════════
+        # PAGINATION LOOP - xử lý từng batch 200 đơn đến khi hết
+        # ════════════════════════════════════════════════════════════════
+        all_batch_pdfs = []
+        BATCH_MAX = 50  # safety limit
 
-        # ── 2. Chọn 200 đơn/trang ──
-        try:
-            current_size = page.evaluate(
-                '() => (document.querySelector("button.pagination-sizes__content") || {}).textContent || ""'
-            ).strip()
-            if current_size and not current_size.startswith('200'):
-                page.evaluate('''() => {
-                    const btn = document.querySelector('button.pagination-sizes__content');
-                    if (btn) {
-                        ['mousedown', 'mouseup', 'click'].forEach(t => {
-                            btn.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window}));
-                        });
-                    }
-                }''')
-                page.wait_for_timeout(1500)
-                page.evaluate('''() => {
-                    const items = document.querySelectorAll('li.page-size-option');
-                    for (const item of items) {
-                        if (item.textContent.trim() === '200') { item.click(); return; }
-                    }
-                }''')
-                page.wait_for_timeout(5000)
-                log_cb('  ✓ Đã chọn 200 đơn/trang', 'info')
-        except Exception as e:
-            log_cb(f'  ⚠ Không chọn được 200/trang: {e}', 'dim')
-
-        # ── 3. Kiểm tra có đơn không ──
-        # Dùng carrier_counts nếu có, nếu không thì đếm checkbox
-        if carrier_counts and carrier in carrier_counts:
-            total_avail = carrier_counts[carrier]
-        else:
-            total_avail = page.evaluate(
-                "() => document.querySelectorAll('input[type=\"checkbox\"]').length") - 1
-        if total_avail <= 0:
-            is_logged_out = page.evaluate("""() => {
-                return (window.location.href.includes('login') ||
-                        window.location.href.includes('signin'));
-            }""")
-            if is_logged_out:
-                log_cb('  ✗ Cookie hết hạn hoặc chưa đăng nhập.', 'err')
-            else:
-                log_cb(f'  ✓ Hết đơn khả dụng{carrier_label} — hoàn thành.', 'ok')
-            return pdf_files, playwright, browser, carrier_counts
-
-        # ── 4. Click "Chọn tất cả" ──
-        log_cb(f'  \U0001f5b1 Đang chọn tất cả {total_avail} đơn hàng...', 'info')
-        page.evaluate('''() => {
-            const label = document.querySelector('[data-testid="mass-ship-checkbox-all"]');
-            if (!label) return;
-            const indicator = label.querySelector('.eds-checkbox__indicator');
-            const target = indicator || label;
-            ['mousedown', 'mouseup', 'click'].forEach(t => {
-                target.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window}));
-            });
-            const input = label.querySelector('input[type="checkbox"]');
-            if (input) input.dispatchEvent(new Event('change', {bubbles: true}));
-        }''')
-        page.wait_for_timeout(2000)
-
-        checked = page.evaluate(
-            "() => { const all = document.querySelectorAll('input[type=\"checkbox\"]:checked'); let c = 0; for (const cb of all) { if (!cb.closest('[data-testid=\"mass-ship-checkbox-all\"]')) c++; } return c; }")
-        log_cb(f'  ✓ Đã chọn {checked}/{total_avail} đơn hàng', 'ok')
-
-        if checked == 0:
-            log_cb('  ✓ Hết đơn — hoàn thành.', 'ok')
-            return pdf_files, playwright, browser, carrier_counts
-
-        if test_mode:
-            log_cb('  🧪 TEST MODE: Dừng tại bước chọn đơn — không in.', 'warn')
-            try:
-                ss = str(Path(output_dir) / f'test_mode_{carrier or "all"}.png')
-                page.screenshot(path=ss)
-                log_cb(f'  📸 Screenshot: {ss}', 'info')
-            except Exception:
-                pass
-            return pdf_files, playwright, browser, carrier_counts
-
-        # ── 5. Click "Yêu cầu đơn vị vận chuyển đến lấy hàng" ──
-        state_cb('printing', 'Đang yêu cầu lấy hàng...')
-        pickup_btn = None
-        for btn_text in ['Yêu cầu đơn vị vận chuyển đến lấy hàng',
-                         'Yêu cầu đơn vị vận chuyển', 'Yêu cầu lấy hàng']:
-            try:
-                btn = page.locator(f'button:has-text("{btn_text}")').first
-                if btn.count() > 0 and btn.is_visible(timeout=2000):
-                    pickup_btn = btn
-                    break
-            except Exception:
-                pass
-        if not pickup_btn:
-            # Fallback: tìm bằng data-testid
-            try:
-                btn = page.locator('[data-testid="arrange-pickup-confirm-button"]').first
-                if btn.count() > 0 and btn.is_visible(timeout=2000):
-                    pickup_btn = btn
-            except Exception:
-                pass
-        if pickup_btn:
-            pickup_btn.click(force=True, timeout=5000)
-            log_cb('  ✓ Đã bấm "Yêu cầu đơn vị vận chuyển đến lấy hàng"', 'ok')
-            log_cb('  ⏳ Đợi 1 phút cho popup hiện ra...', 'info')
-            page.wait_for_timeout(60000)
-        else:
-            log_cb('  ✗ Không tìm thấy nút "Yêu cầu đơn vị vận chuyển đến lấy hàng"', 'err')
-            page.screenshot(path=str(Path(output_dir) / f'debug_no_pickup_btn_{carrier or "all"}.png'))
-            return pdf_files, playwright, browser, carrier_counts
-
-        # ── 6. Popup: click "Tạo" ──
-        state_cb('printing', 'Đang tạo yêu cầu...')
-        tao_btn = None
-        for _ in range(30):  # Đợi tối đa 30 giây
-            for btn_text in ['Tạo', 'Xác nhận', 'Confirm', 'Create']:
-                try:
-                    btn = page.locator(f'button:has-text("{btn_text}")').first
-                    if btn.count() > 0 and btn.is_visible(timeout=500):
-                        tao_btn = btn
-                        break
-                except Exception:
-                    pass
-            if tao_btn:
-                break
-            page.wait_for_timeout(1000)
-        if tao_btn:
-            tao_btn.click(force=True, timeout=5000)
-            log_cb('  ✓ Đã bấm "Tạo"', 'ok')
-            page.wait_for_timeout(5000)
-        else:
-            log_cb('  ⚠ Không tìm thấy nút "Tạo" — thử tiếp...', 'warn')
-
-                # ── 7. Click "Chọn phiếu thủ công" trong popup kết quả ──
-        state_cb('printing', 'Đang chọn loại phiếu...')
-        log_cb('  🔍 Đang tìm nút "Chọn phiếu thủ công"...', 'dim')
-        manual_btn_found = False
-        for _ in range(30):  # Polling 30 giây
-            try:
-                clicked = page.evaluate('''() => {
-                    const btns = document.querySelectorAll('button');
-                    for (const btn of btns) {
-                        if (btn.textContent.includes('Chọn phiếu thủ công') && btn.offsetParent !== null) {
-                            btn.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                }''')
-                if clicked:
-                    log_cb('  ✓ Đã bấm "Chọn phiếu thủ công"', 'ok')
-                    manual_btn_found = True
-                    page.wait_for_timeout(2000)
-                    break
-            except Exception:
-                pass
-            page.wait_for_timeout(1000)
-
-        if not manual_btn_found:
-            log_cb('  ⚠ Không tìm thấy nút "Chọn phiếu thủ công" sau 30 giây — chụp screenshot...', 'warn')
-            try:
-                page.screenshot(path=str(Path(output_dir) / f'debug_no_manual_btn_{carrier or "all"}.png'))
-            except Exception:
-                pass
-
-        # ── 8. Popup chọn phiếu: tick TẤT CẢ loại phiếu — in 1 lần duy nhất ──
-        state_cb('printing', 'Đang tích chọn loại phiếu...')
-
-        # Tất cả checkbox cần tick — đúng 2 loại: phiếu xuất + phiếu gửi hàng & đóng gói
-        # KHÔNG tick "Phiếu gửi hàng" đơn lẻ hoặc "Phiếu đóng gói" đơn lẻ
-        CHECK_TEXTS = [
-            'Phiếu xuất hàng',
-            'Phiếu gửi hàng và phiếu đóng gói',
-        ]
-
-        # 8a. Dump TẤT CẢ checkbox trong popup (debug) + un-tick
-        try:
-            all_checkboxes_info = page.evaluate('''() => {
-                const results = [];
-                // Tìm mọi element có checkbox
-                const labels = document.querySelectorAll('label');
-                for (const lbl of labels) {
-                    const cb = lbl.querySelector('input[type="checkbox"]');
-                    if (cb && lbl.offsetParent !== null) {
-                        results.push({
-                            text: lbl.textContent.trim().substring(0, 120),
-                            checked: cb.checked,
-                            visible: cb.offsetParent !== null
-                        });
-                    }
-                }
-                // Un-tick all checked
-                let unTicked = 0;
-                for (const lbl of labels) {
-                    const cb = lbl.querySelector('input[type="checkbox"]');
-                    if (cb && cb.checked && cb.offsetParent !== null) {
-                        lbl.click();
-                        cb.dispatchEvent(new Event('change', {bubbles: true}));
-                        unTicked++;
-                    }
-                }
-                return JSON.stringify({checkboxes: results, unTicked: unTicked});
-            }''')
-            info = json.loads(all_checkboxes_info)
-            for cbi in info.get('checkboxes', []):
-                marker = '☑' if cbi['checked'] else '☐'
-                log_cb(f'  {marker} {cbi["text"]}', 'dim')
-            if info.get('unTicked', 0) > 0:
-                log_cb(f'  🗑 Đã bỏ tick {info["unTicked"]} checkbox', 'dim')
-            page.wait_for_timeout(500)
-        except Exception as e:
-            log_cb(f'  ⚠ Lỗi un-tick: {e}', 'warn')
-
-        # 8b. Tick checkbox: tìm label chứa text mong muốn → click trực tiếp
-        ticked_texts = []
-        for wanted in CHECK_TEXTS:
-            wanted_norm = wanted.strip().lower()
-            try:
-                ticked = page.evaluate(f'''(wanted) => {{
-                    const norm = (s) => s.trim().toLowerCase().replace(/\\s+/g, ' ');
-                    // Tìm TẤT CẢ label có checkbox, khớp text
-                    const labels = document.querySelectorAll('label');
-                    for (const lbl of labels) {{
-                        const cb = lbl.querySelector('input[type="checkbox"]');
-                        if (!cb || lbl.offsetParent === null) continue;
-                        const txt = norm(lbl.textContent);
-                        if (txt.includes(wanted)) {{
-                            if (!cb.checked) {{
-                                // Click trực tiếp vào label (cách đáng tin cậy nhất)
-                                lbl.click();
-                                // Đồng thời dispatch event lên checkbox
-                                cb.dispatchEvent(new Event('change', {{bubbles: true}}));
-                            }}
-                            return txt.substring(0, 80) + ' => ' + (cb.checked ? 'OK' : 'FAIL');
-                        }}
-                    }}
-                    // Fallback: tìm text node bất kỳ rồi leo lên parent có checkbox
-                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                    let node;
-                    while (node = walker.nextNode()) {{
-                        if (norm(node.textContent).includes(wanted) && node.parentElement.offsetParent !== null) {{
-                            // Leo lên tìm element chứa checkbox
-                            let el = node.parentElement;
-                            for (let i = 0; i < 5 && el; i++) {{
-                                const cb = el.querySelector('input[type="checkbox"]');
-                                if (cb) {{
-                                    if (!cb.checked) {{
-                                        el.click();
-                                        cb.dispatchEvent(new Event('change', {{bubbles: true}}));
-                                    }}
-                                    return 'treeWalker=>' + wanted + ' => ' + (cb.checked ? 'OK' : 'FAIL');
-                                }}
-                                el = el.parentElement;
-                            }}
-                        }}
-                    }}
-                    return '';
-                }}''', wanted_norm)
-                if ticked:
-                    log_cb(f'  ✓ Đã tick: {ticked}', 'ok' if 'OK' in ticked else 'warn')
-                    ticked_texts.append(wanted)
-                else:
-                    log_cb(f'  ✗ Không tìm thấy checkbox: "{wanted}"', 'warn')
-            except Exception as e:
-                log_cb(f'  ⚠ Lỗi tick "{wanted}": {e}', 'warn')
-            page.wait_for_timeout(300)
-
-        # 8c. Chụp screenshot popup để debug nếu cần
-        if len(ticked_texts) < len(CHECK_TEXTS):
-            try:
-                ss = str(Path(output_dir) / f'debug_popup_{carrier or "all"}.png')
-                page.screenshot(path=ss)
-                log_cb(f'  📸 Screenshot popup: {ss}', 'dim')
-            except Exception:
-                pass
-
-        page.wait_for_timeout(500)
-
-        # 8c. Click "Tạo phiếu đã chọn" — bắt tab mới + network interception lấy PDF
-        new_page_ref = []
-        downloaded_files = []
-
-        def _awb_on_new_page(p):
-            """Bắt tab awbprint mới, dùng network interception để bắt PDF response."""
-            log_cb(f'  🔔 Tab awbprint: {p.url[:120] if p.url else "(đang load)"}', 'dim')
-            new_page_ref.append(p)
-
-            # ★ Cách chính: Network interception — bắt response PDF từ API Shopee
-            def _on_response(response):
-                if downloaded_files:
-                    return
-                ct = (response.headers.get('content-type', '') or '').lower()
-                url = response.url or ''
-                url_lower = url.lower()
-                # Bắt response: content-type PDF, force-download, hoặc URL download_sd_job
-                is_pdf_ct = ('application/pdf' in ct or 'application/force-download' in ct)
-                is_pdf_url = (url_lower.endswith('.pdf') or 'download_sd_job' in url_lower)
-                if (is_pdf_ct or is_pdf_url) and response.ok:
+        for batch_num in range(1, BATCH_MAX + 1):
+            # ── Reload orders page (batch 1 already loaded above) ──
+            if batch_num > 1:
+                log_cb(f'📦 Batch {batch_num}: tải lại danh sách đơn{carrier_label}...', 'info')
+                for goto_attempt in range(3):
                     try:
-                        body = response.body()
-                        if body and len(body) > 5000:  # PDF thực sự (>5KB, lọc blob placeholder)
-                            base_name = f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf'
-                            bp = str(Path(output_dir) / base_name)
-                            with open(bp, 'wb') as f:
-                                f.write(body)
-                            downloaded_files.append(bp)
-                            pdf_files.append(bp)
-                            log_cb(f'  💾 Bắt PDF từ network: {Path(bp).name} ({len(body)//1024}KB)', 'ok')
+                        page.goto(orders_url, wait_until='domcontentloaded', timeout=60000)
+                        break
                     except Exception as e:
-                        log_cb(f'  ⚠ Lỗi đọc response body: {e}', 'warn')
+                        if goto_attempt < 2:
+                            log_cb(f'  ⚠ Lỗi mạng (lần {goto_attempt + 1}/3): {e} — thử lại sau 5s...', 'warn')
+                            page.wait_for_timeout(5000)
+                        else:
+                            raise
+                for _ in range(15):
+                    if page.evaluate("() => document.querySelectorAll('input[type=\"checkbox\"]').length") > 1:
+                        break
+                    page.wait_for_timeout(1000)
+                page.wait_for_timeout(2000)
+                _detect_captcha(page, log_cb, state_cb, stop_event)
+            else:
+                log_cb(f'📦 Batch 1: xử lý đơn{carrier_label}...', 'info')
 
-            p.on('response', _on_response)
-
-            # ★ Cách dự phòng: Download event (nếu Shopee trigger)
-            def _awb_dl(dl):
-                if downloaded_files:
-                    return
-                base_name = dl.suggested_filename or f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf'
-                bp = str(Path(output_dir) / base_name)
-                try:
-                    dl.save_as(bp)
-                    downloaded_files.append(bp)
-                    log_cb(f'  💾 Download event: {Path(bp).name}', 'ok')
-                    pdf_files.append(bp)
-                except Exception as e:
-                    log_cb(f'  ⚠ Lỗi lưu download: {e}', 'warn')
-            p.on('download', _awb_dl)
-
-        context.on('page', _awb_on_new_page)
-
-        # Click nút "Tạo phiếu đã chọn"
-        create_clicked = False
-        for btn_text in ['Tạo phiếu đã chọn', 'Tạo phiếu', 'Tạo']:
+            # ── 1. Dismiss popup ──
+            page.wait_for_timeout(3000)
             try:
-                btn = page.locator(f'button:has-text("{btn_text}")').first
-                if btn.count() > 0 and btn.is_visible(timeout=2000):
-                    btn.click(force=True, timeout=5000)
-                    log_cb(f'  ✓ Đã bấm "{btn_text}"', 'dim')
-                    create_clicked = True
-                    break
-            except Exception:
-                pass
-
-        if not create_clicked:
-            try:
-                clicked = page.evaluate('''() => {
-                    const btns = document.querySelectorAll('button');
-                    for (const btn of btns) {
+                dismissed = page.evaluate('''() => {
+                    const buttons = document.querySelectorAll('button');
+                    for (const btn of buttons) {
                         const txt = btn.textContent.trim();
-                        if ((txt.includes('Tạo phiếu') || txt.includes('Tạo')) && btn.offsetParent !== null) {
+                        if (txt === 'Đã hiểu' || txt === 'Bỏ qua' || txt === 'Skip') {
                             btn.click();
+                            btn.dispatchEvent(new MouseEvent('click', {bubbles: true}));
                             return txt;
                         }
                     }
                     return '';
                 }''')
-                if clicked:
-                    log_cb(f'  ✓ Fallback: đã bấm "{clicked}"', 'dim')
-                    create_clicked = True
+                if dismissed:
+                    log_cb(f'  ✓ Đã tắt popup "{dismissed}"', 'info')
+                    page.wait_for_timeout(2000)
             except Exception:
                 pass
 
-        if not create_clicked:
-            log_cb('  ⚠ Không tìm thấy nút "Tạo phiếu đã chọn"', 'warn')
+            # ── 2. Select 200/page ──
             try:
-                context.remove_listener('page', _awb_on_new_page)
-            except Exception:
-                pass
-            return pdf_files, playwright, browser, carrier_counts
+                current_size = page.evaluate(
+                    '() => (document.querySelector("button.pagination-sizes__content") || {}).textContent || ""'
+                ).strip()
+                if current_size and not current_size.startswith('200'):
+                    page.evaluate('''() => {
+                        const btn = document.querySelector('button.pagination-sizes__content');
+                        if (btn) {
+                            ['mousedown', 'mouseup', 'click'].forEach(t => {
+                                btn.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window}));
+                            });
+                        }
+                    }''')
+                    page.wait_for_timeout(1500)
+                    page.evaluate('''() => {
+                        const items = document.querySelectorAll('li.page-size-option');
+                        for (const item of items) {
+                            if (item.textContent.trim() === '200') { item.click(); return; }
+                        }
+                    }''')
+                    page.wait_for_timeout(5000)
+                    log_cb('  ✓ Đã chọn 200 đơn/trang', 'info')
+            except Exception as e:
+                log_cb(f'  ⚠ Không chọn được 200/trang: {e}', 'dim')
 
-        # ── Đợi tab awbprint mở + network bắt PDF ──
-        log_cb('  ⏳ Đợi tab awbprint mở + bắt PDF từ network (tối đa 120 giây)...', 'dim')
-
-        for _wait_i in range(60):
-            if downloaded_files:
+            # ── 3. Check remaining orders ──
+            remaining = page.evaluate(
+                "() => document.querySelectorAll('input[type=\"checkbox\"]').length") - 1
+            if remaining <= 0:
+                log_cb(f'  ✓ Hết đơn khả dụng{carrier_label} — hoàn thành!', 'ok')
                 break
 
-            # Polling tìm tab mới (nếu context.on('page') chưa bắt được)
-            if not new_page_ref:
-                for p in context.pages:
-                    if p != page and not p.is_closed():
-                        _awb_on_new_page(p)
-                        break
+            log_cb(f'  📋 Batch {batch_num}: {remaining} đơn còn lại', 'info')
 
-            # Nếu đã có tab awbprint, đợi nó load xong
-            if new_page_ref:
-                awb_page = new_page_ref[0]
-                if not awb_page.is_closed():
-                    try:
-                        # Đợi trang load hoàn toàn (network idle) để network interception bắt được PDF
-                        if _wait_i == 5:  # Sau ~10 giây
-                            try:
-                                awb_page.wait_for_load_state('networkidle', timeout=30000)
-                            except Exception:
-                                pass
-                        # Thử click nút in/tải nếu có
-                        if _wait_i >= 10 and not downloaded_files:
-                            for btn_text in ['In', 'In phiếu', 'Print', 'Tải về', 'Download', 'Lưu']:
-                                try:
-                                    btn = awb_page.locator(f'button:has-text("{btn_text}")').first
-                                    if btn.count() > 0 and btn.is_visible(timeout=500):
-                                        btn.click(force=True, timeout=3000)
-                                        log_cb(f'  ✓ Đã bấm "{btn_text}" trên tab awbprint', 'dim')
-                                        break
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-
+            # ── 4. Click Select All ──
+            page.evaluate('''() => {
+                const label = document.querySelector('[data-testid="mass-ship-checkbox-all"]');
+                if (!label) return;
+                const indicator = label.querySelector('.eds-checkbox__indicator');
+                const target = indicator || label;
+                ['mousedown', 'mouseup', 'click'].forEach(t => {
+                    target.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true, view: window}));
+                });
+                const input = label.querySelector('input[type="checkbox"]');
+                if (input) input.dispatchEvent(new Event('change', {bubbles: true}));
+            }''')
             page.wait_for_timeout(2000)
 
-        try:
-            context.remove_listener('page', _awb_on_new_page)
-        except Exception:
-            pass
+            checked = page.evaluate(
+                "() => { const all = document.querySelectorAll('input[type=\"checkbox\"]:checked'); let c = 0; for (const cb of all) { if (!cb.closest('[data-testid=\"mass-ship-checkbox-all\"]')) c++; } return c; }")
+            log_cb(f'  ✓ Đã chọn {checked}/{remaining} đơn hàng', 'ok')
 
-        if downloaded_files:
-            log_cb(f'  ✅ Đã lấy {len(downloaded_files)} file PDF', 'ok')
-        else:
-            # Last resort: page.pdf() trên tab awbprint sau khi đã đợi kỹ
-            log_cb('  ⚠ Network không bắt được PDF — thử page.pdf()...', 'warn')
-            try:
-                ss = str(Path(output_dir) / f'debug_no_dl_{carrier or "all"}.png')
-                page.screenshot(path=ss)
-                log_cb(f'  📸 Screenshot: {ss}', 'dim')
-            except Exception:
-                pass
+            if checked == 0:
+                log_cb('  ✓ Hết đơn — hoàn thành.', 'ok')
+                break
 
-            awb_page = new_page_ref[0] if new_page_ref else None
-            if awb_page and not awb_page.is_closed():
+            # ── 5. Test mode ──
+            if test_mode:
+                log_cb(f'  🧪 TEST MODE: Dừng tại bước chọn đơn — không in.', 'warn')
                 try:
-                    awb_page.wait_for_load_state('networkidle', timeout=15000)
+                    ss = str(Path(output_dir) / f'test_mode_{carrier or "all"}_batch{batch_num}.png')
+                    page.screenshot(path=ss)
+                    log_cb(f'  📸 Screenshot: {ss}', 'info')
                 except Exception:
                     pass
-                awb_page.wait_for_timeout(5000)
+                break
 
-                # Thử lại network check: có thể PDF đã load nhưng bị bỏ lỡ
-                # Thử tìm URL PDF trong DOM
+            # ── 6. Click pickup button ──
+            state_cb('printing', 'Đang yêu cầu lấy hàng...')
+            pickup_btn = None
+            for btn_text in ['Yêu cầu đơn vị vận chuyển đến lấy hàng',
+                             'Yêu cầu đơn vị vận chuyển', 'Yêu cầu lấy hàng']:
                 try:
-                    pdf_url = awb_page.evaluate('''() => {
-                        const embed = document.querySelector('embed[src], iframe[src], object[data]');
-                        if (embed) {
-                            const src = embed.src || embed.data || '';
-                            if (src) return src;
+                    btn = page.locator(f'button:has-text("{btn_text}")').first
+                    if btn.count() > 0 and btn.is_visible(timeout=2000):
+                        pickup_btn = btn
+                        break
+                except Exception:
+                    pass
+            if not pickup_btn:
+                try:
+                    btn = page.locator('[data-testid="arrange-pickup-confirm-button"]').first
+                    if btn.count() > 0 and btn.is_visible(timeout=2000):
+                        pickup_btn = btn
+                except Exception:
+                    pass
+            if pickup_btn:
+                pickup_btn.click(force=True, timeout=5000)
+                log_cb('  ✓ Đã bấm "Yêu cầu đơn vị vận chuyển đến lấy hàng"', 'ok')
+                log_cb('  ⏳ Đợi 1 phút cho popup hiện ra...', 'info')
+                page.wait_for_timeout(60000)
+            else:
+                log_cb('  ✗ Không tìm thấy nút "Yêu cầu lấy hàng"', 'err')
+                page.screenshot(path=str(Path(output_dir) / f'debug_no_pickup_btn_{carrier or "all"}_batch{batch_num}.png'))
+                continue
+
+            # ── 7. Click "Tạo" in popup ──
+            state_cb('printing', 'Đang tạo yêu cầu...')
+            tao_btn = None
+            for _ in range(30):
+                for btn_text in ['Tạo', 'Xác nhận', 'Confirm', 'Create']:
+                    try:
+                        btn = page.locator(f'button:has-text("{btn_text}")').first
+                        if btn.count() > 0 and btn.is_visible(timeout=500):
+                            tao_btn = btn
+                            break
+                    except Exception:
+                        pass
+                if tao_btn:
+                    break
+                page.wait_for_timeout(1000)
+            if tao_btn:
+                tao_btn.click(force=True, timeout=5000)
+                log_cb('  ✓ Đã bấm "Tạo"', 'ok')
+                page.wait_for_timeout(5000)
+            else:
+                log_cb('  ⚠ Không tìm thấy nút "Tạo" — thử batch tiếp...', 'warn')
+                continue
+
+            # ── 8. Click manual select ──
+            state_cb('printing', 'Đang chọn loại phiếu...')
+            log_cb('  🔍 Đang tìm nút "Chọn phiếu thủ công"...', 'dim')
+            manual_btn_found = False
+            for _ in range(30):
+                try:
+                    clicked = page.evaluate('''() => {
+                        const btns = document.querySelectorAll('button');
+                        for (const btn of btns) {
+                            if (btn.textContent.includes('Chọn phiếu thủ công') && btn.offsetParent !== null) {
+                                btn.click();
+                                return true;
+                            }
                         }
-                        // Tìm URL trong performance entries
-                        const entries = performance.getEntriesByType('resource');
-                        for (const e of entries) {
-                            if (e.name.includes('pdf') || e.name.includes('awbprint') || e.name.includes('download'))
-                                return e.name;
+                        return false;
+                    }''')
+                    if clicked:
+                        log_cb('  ✓ Đã bấm "Chọn phiếu thủ công"', 'ok')
+                        manual_btn_found = True
+                        page.wait_for_timeout(2000)
+                        break
+                except Exception:
+                    pass
+                page.wait_for_timeout(1000)
+            if not manual_btn_found:
+                log_cb('  ⚠ Không tìm thấy nút "Chọn phiếu thủ công" sau 30 giây', 'warn')
+                try:
+                    page.screenshot(path=str(Path(output_dir) / f'debug_no_manual_btn_{carrier or "all"}_batch{batch_num}.png'))
+                except Exception:
+                    pass
+                continue
+
+            # ── 9. Tick checkboxes ──
+            state_cb('printing', 'Đang tích chọn loại phiếu...')
+            CHECK_TEXTS = ['Phiếu xuất hàng', 'Phiếu gửi hàng và phiếu đóng gói']
+
+            # 9a. Dump + un-tick
+            try:
+                all_checkboxes_info = page.evaluate('''() => {
+                    const results = [];
+                    const labels = document.querySelectorAll('label');
+                    for (const lbl of labels) {
+                        const cb = lbl.querySelector('input[type="checkbox"]');
+                        if (cb && lbl.offsetParent !== null) {
+                            results.push({text: lbl.textContent.trim().substring(0, 120), checked: cb.checked});
+                        }
+                    }
+                    let unTicked = 0;
+                    for (const lbl of labels) {
+                        const cb = lbl.querySelector('input[type="checkbox"]');
+                        if (cb && cb.checked && cb.offsetParent !== null) {
+                            lbl.click(); cb.dispatchEvent(new Event('change', {bubbles: true})); unTicked++;
+                        }
+                    }
+                    return JSON.stringify({checkboxes: results, unTicked: unTicked});
+                }''')
+                info = json.loads(all_checkboxes_info)
+                for cbi in info.get('checkboxes', []):
+                    marker = '☑' if cbi['checked'] else '☐'
+                    log_cb(f'  {marker} {cbi["text"]}', 'dim')
+                if info.get('unTicked', 0) > 0:
+                    log_cb(f'  🗑 Đã bỏ tick {info["unTicked"]} checkbox', 'dim')
+                page.wait_for_timeout(500)
+            except Exception as e:
+                log_cb(f'  ⚠ Lỗi un-tick: {e}', 'warn')
+
+            # 9b. Tick desired checkboxes
+            ticked_texts = []
+            for wanted in CHECK_TEXTS:
+                wanted_norm = wanted.strip().lower()
+                try:
+                    ticked = page.evaluate(f'''(wanted) => {{
+                        const norm = (s) => s.trim().toLowerCase().replace(/\\s+/g, ' ');
+                        const labels = document.querySelectorAll('label');
+                        for (const lbl of labels) {{
+                            const cb = lbl.querySelector('input[type="checkbox"]');
+                            if (!cb || lbl.offsetParent === null) continue;
+                            if (norm(lbl.textContent).includes(wanted)) {{
+                                if (!cb.checked) {{ lbl.click(); cb.dispatchEvent(new Event('change', {{bubbles: true}})); }}
+                                return norm(lbl.textContent).substring(0, 80) + ' => ' + (cb.checked ? 'OK' : 'FAIL');
+                            }}
+                        }}
+                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let node;
+                        while (node = walker.nextNode()) {{
+                            if (norm(node.textContent).includes(wanted) && node.parentElement.offsetParent !== null) {{
+                                let el = node.parentElement;
+                                for (let i = 0; i < 5 && el; i++) {{
+                                    const cb = el.querySelector('input[type="checkbox"]');
+                                    if (cb) {{
+                                        if (!cb.checked) {{ el.click(); cb.dispatchEvent(new Event('change', {{bubbles: true}})); }}
+                                        return 'treeWalker=>' + wanted + ' => ' + (cb.checked ? 'OK' : 'FAIL');
+                                    }}
+                                    el = el.parentElement;
+                                }}
+                            }}
+                        }}
+                        return '';
+                    }}''', wanted_norm)
+                    if ticked:
+                        log_cb(f'  ✓ Đã tick: {ticked}', 'ok' if 'OK' in ticked else 'warn')
+                        ticked_texts.append(wanted)
+                    else:
+                        log_cb(f'  ✗ Không tìm thấy checkbox: "{wanted}"', 'warn')
+                except Exception as e:
+                    log_cb(f'  ⚠ Lỗi tick "{wanted}": {e}', 'warn')
+                page.wait_for_timeout(300)
+
+            if len(ticked_texts) < len(CHECK_TEXTS):
+                try:
+                    ss = str(Path(output_dir) / f'debug_popup_{carrier or "all"}_batch{batch_num}.png')
+                    page.screenshot(path=ss)
+                    log_cb(f'  📸 Screenshot popup: {ss}', 'dim')
+                except Exception:
+                    pass
+            page.wait_for_timeout(500)
+
+            # ── 10. Create documents + network interception ──
+            new_page_ref = []
+            downloaded_files = []
+
+            def _awb_on_new_page(p):
+                log_cb(f'  🔔 Tab awbprint: {p.url[:120] if p.url else "(loading)"}', 'dim')
+                new_page_ref.append(p)
+                def _on_response(response):
+                    if downloaded_files: return
+                    ct = (response.headers.get('content-type', '') or '').lower()
+                    url_lower = (response.url or '').lower()
+                    if (('application/pdf' in ct or 'application/force-download' in ct or url_lower.endswith('.pdf') or 'download_sd_job' in url_lower) and response.ok):
+                        try:
+                            body = response.body()
+                            if body and len(body) > 5000:
+                                bp = str(Path(output_dir) / f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
+                                with open(bp, 'wb') as f: f.write(body)
+                                downloaded_files.append(bp)
+                                log_cb(f'  💾 Network PDF: {Path(bp).name} ({len(body)//1024}KB)', 'ok')
+                        except Exception as e:
+                            log_cb(f'  ⚠ Response body error: {e}', 'warn')
+                p.on('response', _on_response)
+                def _awb_dl(dl):
+                    if downloaded_files: return
+                    bp = str(Path(output_dir) / (dl.suggested_filename or f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf'))
+                    try:
+                        dl.save_as(bp)
+                        downloaded_files.append(bp)
+                        log_cb(f'  💾 Download: {Path(bp).name}', 'ok')
+                    except Exception as e:
+                        log_cb(f'  ⚠ Save error: {e}', 'warn')
+                p.on('download', _awb_dl)
+
+            context.on('page', _awb_on_new_page)
+
+            create_clicked = False
+            for btn_text in ['Tạo phiếu đã chọn', 'Tạo phiếu', 'Tạo']:
+                try:
+                    btn = page.locator(f'button:has-text("{btn_text}")').first
+                    if btn.count() > 0 and btn.is_visible(timeout=2000):
+                        btn.click(force=True, timeout=5000)
+                        log_cb(f'  ✓ Đã bấm "{btn_text}"', 'dim')
+                        create_clicked = True
+                        break
+                except Exception:
+                    pass
+            if not create_clicked:
+                try:
+                    clicked = page.evaluate('''() => {
+                        const btns = document.querySelectorAll('button');
+                        for (const btn of btns) {
+                            const txt = btn.textContent.trim();
+                            if ((txt.includes('Tạo phiếu') || txt.includes('Tạo')) && btn.offsetParent !== null) { btn.click(); return txt; }
                         }
                         return '';
                     }''')
-                    if pdf_url:
-                        log_cb(f'  🔗 Tìm thấy URL: {pdf_url[:150]}', 'dim')
+                    if clicked:
+                        log_cb(f'  ✓ Fallback: đã bấm "{clicked}"', 'dim')
+                        create_clicked = True
                 except Exception:
                     pass
+            if not create_clicked:
+                log_cb('  ⚠ Không tìm thấy nút "Tạo phiếu đã chọn"', 'warn')
+                try: context.remove_listener('page', _awb_on_new_page)
+                except: pass
+                continue
 
+            log_cb('  ⏳ Đợi tab awbprint + PDF (tối đa 120 giây)...', 'dim')
+            for _wait_i in range(60):
+                if downloaded_files: break
+                if not new_page_ref:
+                    for p in context.pages:
+                        if p != page and not p.is_closed():
+                            _awb_on_new_page(p)
+                            break
+                if new_page_ref:
+                    awb_page = new_page_ref[0]
+                    if not awb_page.is_closed():
+                        try:
+                            if _wait_i == 5:
+                                try: awb_page.wait_for_load_state('networkidle', timeout=30000)
+                                except: pass
+                            if _wait_i >= 10 and not downloaded_files:
+                                for btn_text in ['In', 'In phiếu', 'Print', 'Tải về', 'Download', 'Lưu']:
+                                    try:
+                                        btn = awb_page.locator(f'button:has-text("{btn_text}")').first
+                                        if btn.count() > 0 and btn.is_visible(timeout=500):
+                                            btn.click(force=True, timeout=3000)
+                                            log_cb(f'  ✓ Đã bấm "{btn_text}" trên tab awbprint', 'dim')
+                                            break
+                                    except: pass
+                        except: pass
+                page.wait_for_timeout(2000)
+
+            try: context.remove_listener('page', _awb_on_new_page)
+            except: pass
+
+            if downloaded_files:
+                log_cb(f'  ✅ Đã lấy {len(downloaded_files)} file PDF', 'ok')
+            else:
+                log_cb('  ⚠ Network không bắt được PDF — thử page.pdf()...', 'warn')
                 try:
-                    save_path = str(Path(output_dir) / f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
-                    awb_page.pdf(path=save_path)
-                    pdf_files.append(save_path)
-                    downloaded_files.append(save_path)
-                    log_cb(f'  💾 page.pdf(): {Path(save_path).name}', 'ok')
-                except Exception as e2:
-                    log_cb(f'  ⚠ Không lưu được PDF: {e2}', 'warn')
+                    ss = str(Path(output_dir) / f'debug_no_dl_{carrier or "all"}_batch{batch_num}.png')
+                    page.screenshot(path=ss)
+                    log_cb(f'  📸 Screenshot: {ss}', 'dim')
+                except: pass
+                awb_page = new_page_ref[0] if new_page_ref else None
+                if awb_page and not awb_page.is_closed():
+                    try: awb_page.wait_for_load_state('networkidle', timeout=15000)
+                    except: pass
+                    awb_page.wait_for_timeout(5000)
+                    try:
+                        save_path = str(Path(output_dir) / f'Shopee_{carrier or "all"}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
+                        awb_page.pdf(path=save_path)
+                        downloaded_files.append(save_path)
+                        log_cb(f'  💾 page.pdf(): {Path(save_path).name}', 'ok')
+                    except Exception as e2:
+                        log_cb(f'  ⚠ Không lưu được PDF: {e2}', 'warn')
 
-        # Đóng tab awbprint
-        for p in new_page_ref:
-            try:
-                if not p.is_closed():
-                    p.close()
-                    log_cb('  ✓ Đã đóng tab awbprint', 'dim')
-            except Exception:
-                pass
+            for p in new_page_ref:
+                try:
+                    if not p.is_closed():
+                        p.close()
+                        log_cb('  ✓ Đã đóng tab awbprint', 'dim')
+                except: pass
 
-        page.wait_for_timeout(500)
-        try:
-            page.bring_to_front()
-        except Exception:
-            pass
-        page.wait_for_timeout(500)
+            page.wait_for_timeout(500)
+            try: page.bring_to_front()
+            except: pass
+            page.wait_for_timeout(500)
 
-        log_cb(f'  ✅ In phiếu hoàn thành ({len(downloaded_files)} file)', 'ok')
+            for f in downloaded_files:
+                all_batch_pdfs.append(f)
+                pdf_files.append(f)
 
-        return pdf_files, playwright, browser, carrier_counts
+            log_cb(f'  ✅ Batch {batch_num} hoàn thành ({len(downloaded_files)} file)', 'ok')
+            page.wait_for_timeout(2000)
+
+        if all_batch_pdfs:
+            log_cb(f'📥 Tổng cộng {len(all_batch_pdfs)} file PDF sau {batch_num} batch', 'ok')
+        return all_batch_pdfs if all_batch_pdfs else pdf_files, playwright, browser, carrier_counts
 
     except Exception as e:
+
         log_cb(f'  ✗ Lỗi: {e}', 'err')
         try:
             page.screenshot(path=str(Path(output_dir) / f'error_{carrier or "all"}.png'))
