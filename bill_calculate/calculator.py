@@ -210,6 +210,12 @@ def split_shopee_pdf(pdf_path: str, output_dir: str = '') -> tuple[str, str, int
     """
     from pypdf import PdfReader, PdfWriter
 
+    # ── Guard: nếu file đã được tách rồi thì không tách lại nữa ──
+    fname_lower = os.path.basename(pdf_path).lower()
+    if '_phieu_xuat' in fname_lower or '_shipping_label' in fname_lower:
+        print(f'   ⏭ Bỏ qua tách: {os.path.basename(pdf_path)} (đã được tách trước đó)')
+        return '', '', 0
+
     # ── Dùng pdfplumber để phân loại trang (xử lý tiếng Việt đúng) ──
     picking_indices: list[int] = []
     shipping_indices: list[int] = []
