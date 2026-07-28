@@ -341,7 +341,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 log_cb('  ✗ Cookie hết hạn hoặc chưa đăng nhập.', 'err')
             else:
                 log_cb(f'  ✓ Hết đơn khả dụng{carrier_label} — hoàn thành.', 'ok')
-            return pdf_files, playwright, browser
+            return pdf_files, playwright, browser, carrier_counts
 
         # ── 4. Click "Chọn tất cả" ──
         log_cb(f'  \U0001f5b1 Đang chọn tất cả {total_avail} đơn hàng...', 'info')
@@ -364,7 +364,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
 
         if checked == 0:
             log_cb('  ✓ Hết đơn — hoàn thành.', 'ok')
-            return pdf_files, playwright, browser
+            return pdf_files, playwright, browser, carrier_counts
 
         if test_mode:
             log_cb('  🧪 TEST MODE: Dừng tại bước chọn đơn — không in.', 'warn')
@@ -374,7 +374,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 log_cb(f'  📸 Screenshot: {ss}', 'info')
             except Exception:
                 pass
-            return pdf_files, playwright, browser
+            return pdf_files, playwright, browser, carrier_counts
 
         # ── 5. Click "Yêu cầu đơn vị vận chuyển đến lấy hàng" ──
         state_cb('printing', 'Đang yêu cầu lấy hàng...')
@@ -404,7 +404,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         else:
             log_cb('  ✗ Không tìm thấy nút "Yêu cầu đơn vị vận chuyển đến lấy hàng"', 'err')
             page.screenshot(path=str(Path(output_dir) / f'debug_no_pickup_btn_{carrier or "all"}.png'))
-            return pdf_files, playwright, browser
+            return pdf_files, playwright, browser, carrier_counts
 
         # ── 6. Popup: click "Tạo" ──
         state_cb('printing', 'Đang tạo yêu cầu...')
@@ -669,7 +669,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         if not new_page:
             log_cb('  ⚠ Tab in phiếu không tự mở — kiểm tra popup download...', 'warn')
             page.screenshot(path=str(Path(output_dir) / f'debug_no_new_tab_{carrier or "all"}.png'))
-            return pdf_files, playwright, browser
+            return pdf_files, playwright, browser, carrier_counts
 
         log_cb('  ✓ Tab in phiếu đã mở — đợi load...', 'ok')
         try:
@@ -735,7 +735,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         except Exception:
             pass
 
-        return pdf_files, playwright, browser
+        return pdf_files, playwright, browser, carrier_counts
 
     except Exception as e:
         log_cb(f'  ✗ Lỗi: {e}', 'err')
@@ -743,7 +743,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
             page.screenshot(path=str(Path(output_dir) / f'error_{carrier or "all"}.png'))
         except Exception:
             pass
-        return pdf_files, playwright, browser
+        return pdf_files, playwright, browser, carrier_counts
 
 
 def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_path, log_cb, carrier=''):
@@ -827,10 +827,19 @@ class AutomationWorker(QObject):
 
             os.makedirs(out_dir, exist_ok=True)
 
+            # ── Quét 1 lần, skip carrier 0 đơn ──
+            known_carrier_counts: dict[str, int] = {}
+
             for carrier, count in carriers:
                 # ── Skip completed carriers khi resume ──
                 if carrier in completed:
                     self.log_message.emit('info', f'⏭ Bỏ qua [{carrier}] — đã hoàn thành trước đó')
+                    continue
+
+                # ── Skip carriers đã scan thấy 0 đơn ──
+                if carrier in known_carrier_counts and known_carrier_counts[carrier] == 0:
+                    self.log_message.emit('dim', f'⏭ Bỏ qua [{carrier}] — đã quét thấy 0 đơn')
+                    completed.add(carrier)
                     continue
 
                 if self._stop_event.is_set():
@@ -852,7 +861,7 @@ class AutomationWorker(QObject):
                 count_display = f'{count}' if count > 0 else 'tất cả'
                 self.log_message.emit('info', f'📥 Tải PDF [{carrier_display}] ({count_display} đơn)...')
 
-                pdf_paths, pw2, br2 = run_automation(
+                pdf_paths, pw2, br2, scanned_counts = run_automation(
                     cookie, out_dir, count,
                     lambda m, t='': self.log_message.emit(t, m),
                     lambda s, m: self.state_changed.emit(s, m),
@@ -860,6 +869,12 @@ class AutomationWorker(QObject):
                     existing_playwright=pw, existing_browser=br,
                     carrier=carrier, test_mode=test_mode,
                     exclude_pre_orders=exclude_pre_orders)
+
+                # ── Cập nhật known_carrier_counts từ lần scan đầu tiên ──
+                if scanned_counts and not known_carrier_counts:
+                    known_carrier_counts = scanned_counts
+                    active = {k: v for k, v in scanned_counts.items() if v > 0}
+                    self.log_message.emit('info', f'📊 Quét xong: {active if active else "(không có đơn nào)"}')
 
                 if pw2: pw = pw2
                 if br2: br = br2
