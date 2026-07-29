@@ -1117,8 +1117,8 @@ def _merge_pdf_2up(pdf_path):
             for i, page in enumerate(pair):
                 pw = float(page.mediabox.width)
                 ph = float(page.mediabox.height)
-                # Tính scale vừa khít (không nhân thêm scale_factor)
-                scale = min(half_w / pw, avail_h / ph) * 0.98
+                # Tính scale vừa khít
+                scale = 0.7
                 sw, sh = pw * scale, ph * scale
                 tx = margin_left + i * (half_w + gap)
                 ty = canvas_h - margin_top - sh
