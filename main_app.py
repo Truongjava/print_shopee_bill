@@ -889,6 +889,9 @@ class AutomationWorker(QObject):
                                 _print_file(str(shipping_f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
                                             log_cb=lambda m, t='': self.log_message.emit(t, m))
                                 self.log_message.emit('ok', f'  ✓ Đã gửi in: {shipping_f.name}')
+                                # Xóa file shipping label sau khi in (không cần giữ)
+                                try: shipping_f.unlink()
+                                except: pass
                             except Exception as e:
                                 self.log_message.emit('err', f'  ✗ Lỗi in {shipping_f.name}: {e}')
                         else:

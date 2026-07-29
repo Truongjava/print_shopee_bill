@@ -1505,6 +1505,21 @@ def process_all(
     if pdf_path:
         files_dict["pdf_report"] = pdf_path
 
+    # ── Dọn file tách trung gian (_phieu_xuat.pdf) ──
+    cleanup_count = 0
+    for pdf_path in pdf_files:
+        stem = os.path.splitext(os.path.basename(pdf_path))[0]
+        # Xóa file phiếu xuất đã tách (không cần giữ)
+        picking_f = os.path.join(output_dir, f'{stem}_phieu_xuat.pdf')
+        if os.path.exists(picking_f):
+            try:
+                os.remove(picking_f)
+                cleanup_count += 1
+            except Exception:
+                pass
+    if cleanup_count > 0:
+        print(f'   🗑 Đã dọn {cleanup_count} file phiếu xuất trung gian')
+
     return [{
         "base_name": f"Combined {carrier or 'all'}",
         "rows": len(results),
