@@ -283,9 +283,18 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         # PAGINATION LOOP - xử lý từng batch 200 đơn đến khi hết
         # ════════════════════════════════════════════════════════════════
         all_batch_pdfs = []
-        BATCH_MAX = 50  # safety limit
+        PAGE_SIZE = 200
 
-        for batch_num in range(1, BATCH_MAX + 1):
+        # Tính số batch dự kiến từ scan ban đầu (carrier_counts)
+        if carrier_counts and carrier in carrier_counts:
+            total_orders = carrier_counts[carrier]
+            expected_batches = (total_orders + PAGE_SIZE - 1) // PAGE_SIZE
+            max_batches = expected_batches + 2  # dư 2 batch cho đơn mới phát sinh
+            log_cb(f'  📊 {carrier}: {total_orders} đơn → dự kiến {expected_batches} batch (max {max_batches})', 'dim')
+        else:
+            max_batches = 50  # fallback nếu không scan được
+
+        for batch_num in range(1, max_batches + 1):
             # ── Reload orders page (batch 1 already loaded above) ──
             if batch_num > 1:
                 log_cb(f'📦 Batch {batch_num}: tải lại danh sách đơn{carrier_label}...', 'info')
