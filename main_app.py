@@ -879,8 +879,9 @@ class AutomationWorker(QObject):
 
                 # In shipping label SAU khi calculator đã tách file
                 if auto_print and carrier_results:
-                    # Tìm file _shipping_label.pdf trong out_dir
-                    for f in Path(out_dir).glob('*_shipping_label*.pdf'):
+                    # Tìm file _shipping_label.pdf của carrier HIỆN TẠI
+                    carrier_pattern = carrier.replace(' ', '_').replace('&', 'n')
+                    for f in Path(out_dir).glob(f'*{carrier_pattern}*_shipping_label*.pdf'):
                         try:
                             self.log_message.emit('info', f'🖨️ In shipping label: {f.name}')
                             _print_file(str(f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
