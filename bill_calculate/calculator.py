@@ -1338,11 +1338,10 @@ def fill_template(
     ws.page_margins.footer = 0.0
 
     # ── Set độ rộng cột để lấp đầy trang A4 ngang ──
-    # Tổng ~175 — vượt vùng in (~160) để fitToWidth=1 scale xuống vừa khít,
-    # tránh khoảng trống bên phải do Excel không tự scale lên.
+    # Tổng ~162 — vừa vùng in A4 ngang với margin 0.25"
     col_widths = {
-        'A': 5,  'B': 13, 'C': 28, 'D': 11, 'E': 10, 'F': 10, 'G': 10,
-        'H': 5,  'I': 13, 'J': 26, 'K': 11, 'L': 10, 'M': 10, 'N': 10,
+        'A': 4,  'B': 11, 'C': 24, 'D': 10, 'E': 9, 'F': 9, 'G': 9,
+        'H': 4,  'I': 11, 'J': 22, 'K': 10, 'L': 9, 'M': 9, 'N': 9,
     }
     for col_letter, width in col_widths.items():
         ws.column_dimensions[col_letter].width = width
@@ -1352,6 +1351,27 @@ def fill_template(
     ws.row_dimensions[2].height = 30   # Header cột
     for r in range(3, ws.max_row + 1):
         ws.row_dimensions[r].height = 23   # Dòng dữ liệu
+
+    # ── Áp dụng font + alignment cho TOÀN BỘ data cells ──
+    data_font = Font(name='Arial', size=11)
+    data_align_center = Alignment(horizontal='center', vertical='center')
+    data_align_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin'),
+    )
+    # Cột tên sản phẩm (C & J) cần wrap text + left align
+    wrap_cols = {3, 10}
+    for row_idx in range(3, ws.max_row + 1):
+        for col_idx in range(1, 15):  # A=1 đến N=14
+            cell = ws.cell(row=row_idx, column=col_idx)
+            # Chỉ style nếu ô có dữ liệu hoặc là ô trống trong vùng in
+            cell.font = data_font
+            cell.border = thin_border
+            if col_idx in wrap_cols:
+                cell.alignment = data_align_left
+            else:
+                cell.alignment = data_align_center
 
     wb.save(output_path)
     wb.close()
