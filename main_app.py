@@ -289,8 +289,8 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         if carrier_counts and carrier in carrier_counts:
             total_orders = carrier_counts[carrier]
             expected_batches = (total_orders + PAGE_SIZE - 1) // PAGE_SIZE
-            max_batches = expected_batches + 2  # dư 2 batch cho đơn mới phát sinh
-            log_cb(f'  📊 {carrier}: {total_orders} đơn → dự kiến {expected_batches} batch (max {max_batches})', 'dim')
+            max_batches = expected_batches
+            log_cb(f'  📊 {carrier}: {total_orders} đơn → {expected_batches} batch', 'dim')
         else:
             max_batches = 50  # fallback nếu không scan được
 
@@ -881,7 +881,6 @@ class AutomationWorker(QObject):
                 if auto_print and pdf_paths:
                     self.log_message.emit('info', f'🖨️ [{carrier_display}]: In shipping label...')
                     for p in pdf_paths:
-                        # split_shopee_pdf tạo file: {stem}_shipping_label.pdf
                         stem = Path(p).stem
                         shipping_f = Path(out_dir) / f'{stem}_shipping_label.pdf'
                         if shipping_f.exists():
@@ -889,13 +888,16 @@ class AutomationWorker(QObject):
                                 _print_file(str(shipping_f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
                                             log_cb=lambda m, t='': self.log_message.emit(t, m))
                                 self.log_message.emit('ok', f'  ✓ Đã gửi in: {shipping_f.name}')
-                                # Xóa file shipping label sau khi in (không cần giữ)
-                                try: shipping_f.unlink()
-                                except: pass
                             except Exception as e:
                                 self.log_message.emit('err', f'  ✗ Lỗi in {shipping_f.name}: {e}')
-                        else:
-                            self.log_message.emit('dim', f'  ⏭ Chưa có shipping label: {stem}')
+
+                # ── Dọn file shipping label (đã in hoặc không cần in) ──
+                for p in pdf_paths:
+                    stem = Path(p).stem
+                    shipping_f = Path(out_dir) / f'{stem}_shipping_label.pdf'
+                    if shipping_f.exists():
+                        try: shipping_f.unlink()
+                        except: pass
 
                 # In báo cáo sau khi tính toán
                 if auto_print and carrier_results:
