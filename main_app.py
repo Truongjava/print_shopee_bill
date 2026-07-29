@@ -428,8 +428,8 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
             if pickup_btn:
                 pickup_btn.click(force=True, timeout=5000)
                 log_cb('  ✓ Đã bấm "Yêu cầu đơn vị vận chuyển đến lấy hàng"', 'ok')
-                log_cb('  ⏳ Đợi 1 phút cho popup hiện ra...', 'info')
-                page.wait_for_timeout(60000)
+                log_cb('  ⏳ Đợi 30 giây cho popup hiện ra...', 'info')
+                page.wait_for_timeout(30000)
             else:
                 log_cb('  ✗ Không tìm thấy nút "Yêu cầu lấy hàng"', 'err')
                 page.screenshot(path=str(Path(output_dir) / f'debug_no_pickup_btn_{carrier or "all"}_batch{batch_num}.png'))
