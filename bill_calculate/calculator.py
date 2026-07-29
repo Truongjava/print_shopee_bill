@@ -1347,13 +1347,13 @@ def fill_template(
         ws.column_dimensions[col_letter].width = width
 
     # ── Set độ cao hàng ──
-    ws.row_dimensions[1].height = 30   # Tiêu đề
-    ws.row_dimensions[2].height = 30   # Header cột
+    ws.row_dimensions[1].height = 22   # Tiêu đề
+    ws.row_dimensions[2].height = 20   # Header cột
     for r in range(3, ws.max_row + 1):
-        ws.row_dimensions[r].height = 23   # Dòng dữ liệu
+        ws.row_dimensions[r].height = 18   # Dòng dữ liệu
 
     # ── Áp dụng font + alignment cho TOÀN BỘ data cells ──
-    data_font = Font(name='Arial', size=11)
+    data_font = Font(name='Arial', size=10)
     data_align_center = Alignment(horizontal='center', vertical='center')
     data_align_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
     thin_border = Border(
