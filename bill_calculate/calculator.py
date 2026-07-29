@@ -1140,7 +1140,7 @@ def aggregate_reports(
     now = datetime.now()
     output_path = os.path.join(output_dir, f"Phieu_xuat_hang_Tong_hop_{now.strftime('%m-%d_%H-%M-%S')}.xlsx")
 
-    fill_template(results, template_path, output_path, carrier='Tổng hợp', order_count=total_order_count)
+    fill_template(results, template_path, output_path, carrier='Tổng hợp', order_count=total_order_count, source_label='Shopee')
 
     # ── Xuất PDF ──
     pdf_path = ''
@@ -1173,6 +1173,7 @@ def fill_template(
     output_path: str,
     carrier: str = '',
     order_count: int = 0,
+    source_label: str = '',
 ) -> str:
     """
     Mở file mẫu Bảng thống kê hàng.xlsx, điền số lượng (SL, SL bán, SL KM)
@@ -1329,6 +1330,8 @@ def fill_template(
     title_parts.append(f'SL đơn: {order_count}')
     if carrier_str:
         title_parts.append(f'ĐVVC: {carrier_str}')
+    if source_label:
+        title_parts.append(source_label)
     title_parts.append(now.strftime('%d/%m/%Y %H:%M'))
     ws.cell(row=1, column=1).value = '    '.join(title_parts)
 
@@ -1512,7 +1515,7 @@ def process_all(
     prefix = f"Phieu_xuat_hang_{carrier_safe}_" if carrier_safe else "Phieu_xuat_hang_"
     output_path = os.path.join(output_dir, f"{prefix}{now.strftime('%m-%d_%H-%M-%S')}.xlsx")
 
-    fill_template(results, template_path, output_path, carrier=carrier, order_count=total_order_qty)
+    fill_template(results, template_path, output_path, carrier=carrier, order_count=total_order_qty, source_label='Shopee')
 
     # ── Xuất PDF từ file Excel vừa tạo ──
     pdf_path = ''
