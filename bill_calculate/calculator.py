@@ -1348,9 +1348,16 @@ def fill_template(
 
     # ── Set độ cao hàng ──
     ws.row_dimensions[1].height = 22   # Tiêu đề
-    ws.row_dimensions[2].height = 20   # Header cột
+    ws.row_dimensions[2].height = 26   # Header cột
     for r in range(3, ws.max_row + 1):
         ws.row_dimensions[r].height = 18   # Dòng dữ liệu
+
+    # ── Áp dụng font + alignment cho header (row 2) ──
+    hdr_font = Font(name='Arial', size=12, bold=True)
+    for col_idx in range(1, 15):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
 
     # ── Áp dụng font + alignment cho TOÀN BỘ data cells ──
     data_font = Font(name='Arial', size=10)
