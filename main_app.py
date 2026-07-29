@@ -877,18 +877,22 @@ class AutomationWorker(QObject):
                                 self.result_file.emit(f'{lbl} {Path(fp).name}')
                     all_results.extend(carrier_results)
 
-                # In shipping label SAU khi calculator đã tách file
-                if auto_print and carrier_results:
-                    # Tìm file _shipping_label.pdf của carrier HIỆN TẠI
-                    carrier_pattern = carrier.replace(' ', '_').replace('&', 'n')
-                    for f in Path(out_dir).glob(f'*{carrier_pattern}*_shipping_label*.pdf'):
-                        try:
-                            self.log_message.emit('info', f'🖨️ In shipping label: {f.name}')
-                            _print_file(str(f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
-                                        log_cb=lambda m, t='': self.log_message.emit(t, m))
-                            self.log_message.emit('ok', f'  ✓ Đã gửi in: {f.name}')
-                        except Exception as e:
-                            self.log_message.emit('err', f'  ✗ Lỗi in {f.name}: {e}')
+                # In shipping label: chỉ in file sinh ra từ PDF vừa tải
+                if auto_print and pdf_paths:
+                    self.log_message.emit('info', f'🖨️ [{carrier_display}]: In shipping label...')
+                    for p in pdf_paths:
+                        # split_shopee_pdf tạo file: {stem}_shipping_label.pdf
+                        stem = Path(p).stem
+                        shipping_f = Path(out_dir) / f'{stem}_shipping_label.pdf'
+                        if shipping_f.exists():
+                            try:
+                                _print_file(str(shipping_f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
+                                            log_cb=lambda m, t='': self.log_message.emit(t, m))
+                                self.log_message.emit('ok', f'  ✓ Đã gửi in: {shipping_f.name}')
+                            except Exception as e:
+                                self.log_message.emit('err', f'  ✗ Lỗi in {shipping_f.name}: {e}')
+                        else:
+                            self.log_message.emit('dim', f'  ⏭ Chưa có shipping label: {stem}')
 
                 # In báo cáo sau khi tính toán
                 if auto_print and carrier_results:
