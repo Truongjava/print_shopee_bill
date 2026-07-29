@@ -2321,18 +2321,18 @@ class App(QMainWindow):
         gb_layout.setSpacing(8)
 
         # ── Description ──
-        desc = QLabel("Chọn các file Excel báo cáo (Phieu_xuat_hang_*.xlsx) để gộp lại.\n"
-                      "Dữ liệu sẽ được cộng dồn theo SKU từ tất cả các file.")
+        desc = QLabel("Chọn thư mục chứa các file Excel báo cáo (Phieu_xuat_hang_*.xlsx).\n"
+                      "Dữ liệu sẽ được cộng dồn theo SKU từ tất cả các file trong thư mục.")
         desc.setStyleSheet("color: #64748B; font-size: 12px; padding: 4px 0;")
         desc.setWordWrap(True)
         gb_layout.addWidget(desc)
 
-        # ── File list ──
+        # ── Folder selection ──
         btn_row = QHBoxLayout()
-        btn_add = QPushButton("📂 Thêm file báo cáo...")
+        btn_add = QPushButton("📂 Chọn thư mục...")
         btn_add.setObjectName("browseBtn")
         btn_add.setCursor(Qt.PointingHandCursor)
-        btn_add.clicked.connect(self._aggregate_select_files)
+        btn_add.clicked.connect(self._aggregate_select_folder)
         btn_row.addWidget(btn_add)
 
         btn_clear = QPushButton("🗑 Xóa danh sách")
@@ -2342,6 +2342,10 @@ class App(QMainWindow):
         btn_row.addWidget(btn_clear)
         btn_row.addStretch()
         gb_layout.addLayout(btn_row)
+
+        self._aggregate_folder_label = QLabel("")
+        self._aggregate_folder_label.setStyleSheet("color: #60A5FA; font-size: 11px;")
+        gb_layout.addWidget(self._aggregate_folder_label)
 
         self._aggregate_file_list = QListWidget()
         self._aggregate_file_list.setMaximumHeight(150)
@@ -2367,11 +2371,26 @@ class App(QMainWindow):
         scroll.setWidget(w)
         return scroll
 
-    def _aggregate_select_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Chọn file báo cáo Excel", "",
-                                                 "Excel Files (*.xlsx)")
-        for f in files:
+    def _aggregate_select_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục chứa file báo cáo", "")
+        if not folder:
+            return
+        self._aggregate_file_list.clear()
+        self._aggregate_folder_label.setText(f"📁 {folder}")
+        # Auto-scan folder for report files
+        import glob as _glob
+        patterns = [
+            str(Path(folder) / 'Phieu_xuat_hang_*.xlsx'),
+            str(Path(folder) / '*.xlsx'),
+        ]
+        found = set()
+        for pat in patterns:
+            for f in _glob.glob(pat):
+                found.add(f)
+        for f in sorted(found):
             self._aggregate_file_list.addItem(f)
+        if not found:
+            self._ag_log("warn", f"Không tìm thấy file Excel nào trong thư mục")
 
     def _on_run_aggregate(self):
         files = [self._aggregate_file_list.item(i).text()
