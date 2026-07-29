@@ -1073,6 +1073,7 @@ def aggregate_reports(
     # ── Trích xuất + gộp dữ liệu từ tất cả file ──
     merged: dict[str, dict] = {}  # {sku: {qty, qty_sold, promo_qty, product_name, unit}}
     total_files = 0
+    total_order_count = 0
 
     for fp in report_files:
         if not os.path.exists(fp):
@@ -1084,6 +1085,18 @@ def aggregate_reports(
                 print(f"   ⚠ Không trích xuất được dữ liệu từ: {os.path.basename(fp)}")
                 continue
             total_files += 1
+            # ── Trích xuất số đơn từ tiêu đề (hàng 1) ──
+            try:
+                from openpyxl import load_workbook
+                wb_tmp = load_workbook(fp, data_only=True)
+                ws_tmp = wb_tmp.active
+                title_text = str(ws_tmp.cell(row=1, column=1).value or '')
+                wb_tmp.close()
+                m = re.search(r'SL đơn:\s*(\d+)', title_text)
+                if m:
+                    total_order_count += int(m.group(1))
+            except Exception:
+                pass
             for r in rows:
                 sku = r["sku"]
                 if sku not in merged:
@@ -1118,7 +1131,7 @@ def aggregate_reports(
         for sku, info in merged.items()
     ]
 
-    print(f"\n📊 TỔNG HỢP {total_files} file: {len(results)} SKU | "
+    print(f"\n📊 TỔNG HỢP {total_files} file, {total_order_count} đơn: {len(results)} SKU | "
           f"Qty={sum(r['qty'] for r in results)} | "
           f"Sold={sum(r['qty_sold'] for r in results)} | "
           f"Promo={sum(r['promo_qty'] for r in results)}")
@@ -1127,7 +1140,7 @@ def aggregate_reports(
     now = datetime.now()
     output_path = os.path.join(output_dir, f"Phieu_xuat_hang_Tong_hop_{now.strftime('%m-%d_%H-%M-%S')}.xlsx")
 
-    fill_template(results, template_path, output_path, carrier='Tổng hợp', order_count=total_files)
+    fill_template(results, template_path, output_path, carrier='Tổng hợp', order_count=total_order_count)
 
     # ── Xuất PDF ──
     pdf_path = ''
