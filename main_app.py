@@ -805,7 +805,7 @@ class AutomationWorker(QObject):
             printer = config['printer']
             test_mode = config['test_mode']
             exclude_pre_orders = config.get('exclude_pre_orders', True)
-            batch_size = config.get('batch_size', 15)
+            batch_size = config.get('batch_size', 55)
             pdf_settings = config.get('pdf_settings', 'paper=A4')
             carriers = config['carriers']
 
@@ -1000,7 +1000,7 @@ def _wait_print_queue(printer_name, max_jobs=2, timeout=600):
         _t.sleep(1)  # kiểm tra mỗi 1 giây
 
 
-def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, batch_size=15):
+def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, batch_size=55):
     import subprocess, os as _os
     fp = str(file_path)
 
@@ -1154,6 +1154,29 @@ def _get_printers() -> list:
         except: pass
     return printers
 
+
+def _get_default_printer() -> str:
+    """Lấy tên máy in mặc định của hệ thống."""
+    try:
+        import win32print
+        return win32print.GetDefaultPrinter()
+    except Exception:
+        pass
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-Command',
+             '(Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Default=True").Name'],
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+        name = result.stdout.strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return ''
+
+
 # ═══════════════════════════════════════════════════════════════
 # WIDGETS
 # ═══════════════════════════════════════════════════════════════
@@ -1300,7 +1323,7 @@ class App(QMainWindow):
         self.result_files = []
         self._stop_event = threading.Event()
 
-        self._sched_mode = "once"
+        self._sched_mode = "weekly"
         self._sched_interval_hours = 1
         self._sched_weekly_config: dict[int, list[tuple[int, int]]] = {}  # 0=Thứ 2..6=Chủ Nhật
         self._sched_next_run = None
@@ -1729,6 +1752,7 @@ class App(QMainWindow):
         print_row.setSpacing(12)
 
         self.auto_print_cb = QCheckBox("🖨️ In tự động ra máy in")
+        self.auto_print_cb.setChecked(True)
         self.auto_print_cb.setStyleSheet("font-weight: bold; color: #059669;")
         print_row.addWidget(self.auto_print_cb)
 
@@ -1737,7 +1761,11 @@ class App(QMainWindow):
         self.printer_combo.addItems(printers_list)
         self.printer_combo.setMinimumWidth(180)
         if printers_list:
-            self.printer_combo.setCurrentIndex(0)
+            default_printer = _get_default_printer()
+            if default_printer and default_printer in printers_list:
+                self.printer_combo.setCurrentIndex(printers_list.index(default_printer))
+            else:
+                self.printer_combo.setCurrentIndex(0)
         print_row.addWidget(self.printer_combo, 1)
 
         refresh_btn = QPushButton("↻ Cập nhật")
@@ -1762,7 +1790,7 @@ class App(QMainWindow):
         paper_row.addWidget(QLabel("  Batch in (tờ/lần):"))
         self.batch_size_spin = QSpinBox()
         self.batch_size_spin.setRange(1, 100)
-        self.batch_size_spin.setValue(15)
+        self.batch_size_spin.setValue(55)
         self.batch_size_spin.setFixedWidth(60)
         self.batch_size_spin.setToolTip("Số tờ in mỗi lần, tránh máy in quá tải")
         paper_row.addWidget(self.batch_size_spin)
@@ -1833,7 +1861,7 @@ class App(QMainWindow):
         self.sched_button_group = QButtonGroup(self)
 
         self.once_rb = QRadioButton("▶ Chạy ngay lập tức 1 lần duy nhất")
-        self.once_rb.setChecked(True)
+        self.once_rb.setChecked(False)
         self.once_rb.setProperty("mode", "once")
         self.sched_button_group.addButton(self.once_rb)
         gb_layout.addWidget(self.once_rb)
@@ -1862,6 +1890,7 @@ class App(QMainWindow):
         gb_layout.addWidget(self.interval_panel)
 
         self.weekly_rb = QRadioButton("📅 Chạy theo lịch hàng tuần")
+        self.weekly_rb.setChecked(True)
         self.weekly_rb.setProperty("mode", "weekly")
         self.sched_button_group.addButton(self.weekly_rb)
         gb_layout.addWidget(self.weekly_rb)
@@ -1876,7 +1905,7 @@ class App(QMainWindow):
         quick_row = QHBoxLayout()
         quick_row.setSpacing(8)
         quick_row.addWidget(QLabel("Nhập giờ mẫu:"))
-        self.weekly_master_time_edit = QLineEdit("08:00, 14:00, 20:00")
+        self.weekly_master_time_edit = QLineEdit("07:00, 13:00, 15:00, 16:00, 17:00, 18:00")
         self.weekly_master_time_edit.setFixedWidth(200)
         self.weekly_master_time_edit.setToolTip("Định dạng HH:MM, phân cách bằng dấu phẩy")
         quick_row.addWidget(self.weekly_master_time_edit)
@@ -1903,13 +1932,13 @@ class App(QMainWindow):
 
             cb = QCheckBox(name)
             cb.setFixedWidth(90)
-            cb.setChecked(idx < 5)  # Mặc định T2-T6 checked, T7+CN unchecked
+            cb.setChecked(idx < 6)  # Mặc định T2-T7 checked, CN unchecked
             cb.setStyleSheet("font-weight: 500;")
             self.weekly_day_checkboxes[idx] = cb
 
-            te = QLineEdit("08:00, 14:00, 20:00" if idx < 5 else "")
+            te = QLineEdit("07:00, 13:00, 15:00, 16:00, 17:00, 18:00" if idx < 6 else "")
             te.setFixedWidth(220)
-            te.setEnabled(idx < 5)
+            te.setEnabled(idx < 6)
             te.setPlaceholderText("VD: 08:00, 14:00")
             self.weekly_day_time_edits[idx] = te
 
@@ -1922,7 +1951,7 @@ class App(QMainWindow):
             wp_outer.addLayout(day_row)
 
         wp_outer.addStretch()
-        self.weekly_panel.hide()
+        self.weekly_panel.show()
         gb_layout.addWidget(self.weekly_panel)
 
         self.sched_button_group.buttonClicked.connect(self._on_schedule_mode_changed)
@@ -2202,6 +2231,13 @@ class App(QMainWindow):
                             self._test_log.emit("dim", "  ℹ Chưa in — tick 'In tự động ra máy in' ở tab Cấu hình In để in")
                         else:
                             self._test_log.emit("ok", f"  ✓ File sẵn sàng: {Path(actual_fp).name}")
+                    # ── Dọn file shipping label trung gian đã tách ──
+                    if actual_fp != fp and Path(actual_fp).exists():
+                        try:
+                            Path(actual_fp).unlink()
+                            self._test_log.emit("dim", f"  🗑 Đã dọn: {Path(actual_fp).name}")
+                        except Exception:
+                            pass
                 except Exception as e:
                     self._test_log.emit("err", f"  ✗ Lỗi xử lý {Path(fp).name}: {e}")
             self._test_log.emit("bold_ok", "✅ Hoàn tất")
@@ -2272,6 +2308,15 @@ class App(QMainWindow):
                     except Exception as e:
                         self._test_log.emit("err", f"  ✗ Lỗi in {Path(fp).name}: {e}")
 
+            # ── Dọn file shipping label trung gian đã tách ──
+            for fp in shipping_files:
+                if fp not in all_files and Path(fp).exists():
+                    try:
+                        Path(fp).unlink()
+                        self._test_log.emit("dim", f"  🗑 Đã dọn: {Path(fp).name}")
+                    except Exception:
+                        pass
+
             # ── Bước 3: Tính toán + in báo cáo ──
             if picking_files:
                 self._test_log.emit("info", f"📊 {len(picking_files)} file → tính toán...")
@@ -2298,6 +2343,15 @@ class App(QMainWindow):
                                         self._test_log.emit("err", f"  ✗ Lỗi in báo cáo: {e}")
                 except Exception as e:
                     self._test_log.emit("err", f"  ✗ Lỗi tính toán: {e}")
+
+            # ── Dọn file phiếu xuất trung gian đã tách ──
+            for fp in picking_files:
+                if fp not in all_files and Path(fp).exists():
+                    try:
+                        Path(fp).unlink()
+                        self._test_log.emit("dim", f"  🗑 Đã dọn: {Path(fp).name}")
+                    except Exception:
+                        pass
 
             self._test_log.emit("bold_ok", "✅ Hoàn tất toàn bộ")
 
@@ -2326,6 +2380,22 @@ class App(QMainWindow):
         desc.setStyleSheet("color: #64748B; font-size: 12px; padding: 4px 0;")
         desc.setWordWrap(True)
         gb_layout.addWidget(desc)
+
+        # ── Quick: Tổng hợp hôm nay ──
+        quick_row = QHBoxLayout()
+        self._aggregate_today_btn = QPushButton("📅 Tổng hợp hôm nay")
+        self._aggregate_today_btn.setObjectName("schedBtn")
+        self._aggregate_today_btn.setCursor(Qt.PointingHandCursor)
+        self._aggregate_today_btn.clicked.connect(self._on_aggregate_today)
+        quick_row.addWidget(self._aggregate_today_btn)
+        quick_row.addStretch()
+        gb_layout.addLayout(quick_row)
+
+        # ── Separator ──
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #E2E8F0; max-height: 1px;")
+        gb_layout.addWidget(sep)
 
         # ── Folder selection ──
         btn_row = QHBoxLayout()
@@ -2433,6 +2503,49 @@ class App(QMainWindow):
     def _ag_log(self, tag: str, msg: str):
         """Ghi log vào aggregate log view (thread-safe qua signal)."""
         self._test_log.emit(tag, f"[Tổng hợp] {msg}")
+
+    def _on_aggregate_today(self):
+        """Quét thư mục hôm nay và tổng hợp tất cả báo cáo."""
+        base = self.output_row.get_real_path() or str(BASE_DIR / "outputs")
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_dir = Path(base) / today_str
+        if not today_dir.exists():
+            QMessageBox.warning(self, "Cảnh báo", f"Thư mục hôm nay chưa tồn tại:\n{today_dir}")
+            return
+
+        template = self._template_real
+        if not template or not Path(template).exists():
+            QMessageBox.critical(self, "Lỗi", "Chọn file Mẫu xuất hàng hợp lệ ở tab Tệp dữ liệu.")
+            return
+
+        self._aggregate_log.clear()
+        self._aggregate_today_btn.setEnabled(False)
+
+        def _run():
+            self._ag_log("info", f"📅 Tổng hợp thư mục {today_str}...")
+            # Quét file báo cáo trong thư mục hôm nay (trừ file Tong_hop)
+            files = sorted(Path(today_dir).glob('Phieu_xuat_hang_*.xlsx'))
+            files = [str(f) for f in files if 'Tong_hop' not in f.name]
+            if not files:
+                self._ag_log("warn", "⚠ Không tìm thấy file báo cáo nào để tổng hợp")
+                self._aggregate_today_btn.setEnabled(True)
+                return
+            self._ag_log("dim", f"  📄 Tìm thấy {len(files)} file")
+            try:
+                result = aggregate_reports(files, str(today_dir), template)
+                self._ag_log("ok", f"  ✓ {result['rows']} SKU | Qty={result['tong_qty']} | "
+                                    f"Sold={result['tong_sold']} | Promo={result['tong_promo']}")
+                for key, lbl in [('xlsx_report', '📊'), ('pdf_report', '📄')]:
+                    fp = result['files'].get(key)
+                    if fp and Path(fp).exists():
+                        self._add_result(fp, label=lbl)
+                        self._ag_log("ok", f"  {lbl} {Path(fp).name}")
+                self._ag_log("bold_ok", "✅ Tổng hợp hôm nay hoàn tất")
+            except Exception as e:
+                self._ag_log("err", f"✗ Lỗi: {e}")
+            self._aggregate_today_btn.setEnabled(True)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ═══════════════════════════════════════════════════════
     # BOTTOM BAR
@@ -2780,7 +2893,11 @@ class App(QMainWindow):
         self.printer_combo.clear()
         self.printer_combo.addItems(printers)
         if printers:
-            self.printer_combo.setCurrentIndex(0)
+            default_printer = _get_default_printer()
+            if default_printer and default_printer in printers:
+                self.printer_combo.setCurrentIndex(printers.index(default_printer))
+            else:
+                self.printer_combo.setCurrentIndex(0)
 
     # ═══════════════════════════════════════════════════════
     # LOG (colored HTML via QTextEdit)
