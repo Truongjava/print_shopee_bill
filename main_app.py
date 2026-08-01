@@ -1004,6 +1004,8 @@ def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
     Trả về True nếu thành công."""
     import subprocess as _sp, os as _os
 
+    temp_pdf = None  # Track temp file để dọn sau khi in
+
     # ── Detect hướng PDF: nếu ngang → xoay 90° cho khớp giấy dọc máy in ──
     # Edge --kiosk-printing luôn in portrait bất kể DEVMODE máy in
     try:
@@ -1045,7 +1047,6 @@ def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
 
     pw = None
     browser = None
-    temp_pdf = None
     try:
         pw = sync_playwright().start()
         browser = pw.chromium.launch(
@@ -1058,9 +1059,14 @@ def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
         # ── Nếu file_path có space, copy vào temp không space (Playwright encode %20 Edge không hiểu) ──
         import tempfile, shutil as _shutil
         if ' ' in file_path:
-            temp_pdf = os.path.join(tempfile.gettempdir(), os.path.basename(file_path).replace(' ', '_'))
-            _shutil.copy2(file_path, temp_pdf)
-            file_path = temp_pdf
+            space_temp = os.path.join(tempfile.gettempdir(), os.path.basename(file_path).replace(' ', '_'))
+            _shutil.copy2(file_path, space_temp)
+            # Nếu trước đó đã có temp (rotate) thì xóa file rotate cũ
+            if temp_pdf:
+                try: os.remove(temp_pdf)
+                except: pass
+            temp_pdf = space_temp
+            file_path = space_temp
 
         file_url = 'file:///' + file_path.replace('\\', '/')
         page.goto(file_url, wait_until='domcontentloaded', timeout=30000)
