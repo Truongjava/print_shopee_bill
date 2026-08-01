@@ -805,7 +805,7 @@ class AutomationWorker(QObject):
             printer = config['printer']
             test_mode = config['test_mode']
             exclude_pre_orders = config.get('exclude_pre_orders', True)
-            batch_size = config.get('batch_size', 55)
+            batch_size = config.get('batch_size', 0)
             pdf_settings = config.get('pdf_settings', 'paper=A4')
             carriers = config['carriers']
 
@@ -963,11 +963,76 @@ class AutomationWorker(QObject):
             if self._playwright: self._playwright.stop()
         except: pass
 
+def _set_printer_devmode(printer_name, orientation=0, duplex=0):
+    """Thay đổi DEVMODE của máy in (orientation, duplex) QUA REGISTRY — Edge nhìn thấy.
+    orientation: 1=dọc (portrait), 2=ngang (landscape), 0=giữ nguyên
+    duplex: 1=1 mặt, 2=2 mặt lật cạnh dài, 3=2 mặt lật cạnh ngắn, 0=giữ nguyên
+    Trả về (old_orientation, old_duplex) để khôi phục sau."""
+    import win32print, win32con
+
+    if orientation == 0 and duplex == 0:
+        return (0, 0)
+
+    hprinter = win32print.OpenPrinter(printer_name)
+    try:
+        # ── Dùng GetPrinter level 2 để lấy DEVMODE ──
+        prn_info = win32print.GetPrinter(hprinter, 2)
+        devmode = prn_info['pDevMode']
+        old_orientation = devmode.Orientation
+        old_duplex = devmode.Duplex
+
+        changed = False
+        if orientation in (1, 2):
+            devmode.Orientation = orientation
+            changed = True
+        if duplex in (1, 2, 3):
+            devmode.Duplex = duplex
+            changed = True
+
+        if changed:
+            # Ghi DEVMODE per-user (level 9) — không cần admin, Edge process riêng vẫn thấy
+            win32print.SetPrinter(hprinter, 9, {'pDevMode': devmode}, 0)
+
+        return (old_orientation, old_duplex)
+    finally:
+        win32print.ClosePrinter(hprinter)
+
+
 def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
     """In PDF qua Microsoft Edge + kiosk-printing (dùng Playwright).
-    Edge mở file PDF → window.print() → poll queue đến khi Complete/Error.
+    Tự động detect hướng PDF → set DEVMODE khớp → in → khôi phục.
     Trả về True nếu thành công."""
     import subprocess as _sp, os as _os
+
+    # ── Detect hướng PDF: nếu ngang → xoay 90° cho khớp giấy dọc máy in ──
+    # Edge --kiosk-printing luôn in portrait bất kể DEVMODE máy in
+    try:
+        from pypdf import PdfReader as _PdfReader, PdfWriter as _PdfWriter
+        r = _PdfReader(file_path)
+        if r.pages:
+            pg = r.pages[0]
+            mb = pg.mediabox
+            w, h = float(mb.width), float(mb.height)
+            rot = abs(float(getattr(pg, 'rotation', 0) or 0)) % 360
+            if rot in (90, 270):
+                w, h = h, w
+
+            if w > h:  # PDF landscape → phải xoay
+                rotated_path = os.path.join(os.path.dirname(file_path),
+                    '__rotated_' + os.path.basename(file_path))
+                writer = _PdfWriter()
+                for _pg in r.pages:
+                    _pg.rotate(90)
+                    writer.add_page(_pg)
+                writer.write(rotated_path)
+                temp_pdf = rotated_path
+                file_path = rotated_path
+                if log_cb:
+                    log_cb(f'  📐 PDF ngang ({int(w)}x{int(h)}) → xoay 90° cho khớp in dọc', 'dim')
+            elif log_cb:
+                log_cb(f'  📐 PDF dọc ({int(w)}x{int(h)}) → in thẳng', 'dim')
+    except Exception:
+        pass  # Không detect/xoay được thì in nguyên bản
 
     # ── Lưu & đặt máy in mặc định (kiosk-printing in ra default printer) ──
     try:
@@ -980,6 +1045,7 @@ def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
 
     pw = None
     browser = None
+    temp_pdf = None
     try:
         pw = sync_playwright().start()
         browser = pw.chromium.launch(
@@ -989,7 +1055,14 @@ def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
         )
         page = browser.new_page()
 
-        file_url = f"file:///{file_path.replace(chr(92), '/')}"
+        # ── Nếu file_path có space, copy vào temp không space (Playwright encode %20 Edge không hiểu) ──
+        import tempfile, shutil as _shutil
+        if ' ' in file_path:
+            temp_pdf = os.path.join(tempfile.gettempdir(), os.path.basename(file_path).replace(' ', '_'))
+            _shutil.copy2(file_path, temp_pdf)
+            file_path = temp_pdf
+
+        file_url = 'file:///' + file_path.replace('\\', '/')
         page.goto(file_url, wait_until='domcontentloaded', timeout=30000)
         # Đợi PDF render (file càng lớn cần càng lâu)
         page.wait_for_timeout(5000)
@@ -1038,6 +1111,12 @@ def _print_pdf_via_edge(file_path, printer_name, log_cb=None):
                 pw.stop()
         except Exception:
             pass
+        # ── Dọn temp file (cả space fix + rotated) ──
+        if temp_pdf:
+            try:
+                os.remove(temp_pdf)
+            except Exception:
+                pass
         # ── Khôi phục máy in mặc định ──
         if old_default:
             try:
@@ -1076,7 +1155,7 @@ def _wait_print_queue(printer_name, max_jobs=2, timeout=600):
         _t.sleep(1)  # kiểm tra mỗi 1 giây
 
 
-def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, batch_size=55):
+def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, batch_size=0):
     import subprocess, os as _os
     fp = str(file_path)
 
@@ -1108,7 +1187,7 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 total_pages = 0
 
             # ── Batch splitting ──
-            if reader and total_pages > batch_size:
+            if batch_size > 0 and reader and total_pages > batch_size:
                 total_batches = (total_pages + batch_size - 1) // batch_size
                 if log_cb: log_cb(f'  📦 Edge kiosk: Chia {total_pages} tờ → {total_batches} batch ({batch_size} tờ/batch)', 'info')
                 batch_num = 0
@@ -1860,10 +1939,11 @@ class App(QMainWindow):
 
         paper_row.addWidget(QLabel("  Batch in (tờ/lần):"))
         self.batch_size_spin = QSpinBox()
-        self.batch_size_spin.setRange(1, 100)
-        self.batch_size_spin.setValue(55)
+        self.batch_size_spin.setRange(0, 100)
+        self.batch_size_spin.setValue(0)
         self.batch_size_spin.setFixedWidth(60)
-        self.batch_size_spin.setToolTip("Số tờ in mỗi lần, tránh máy in quá tải")
+        self.batch_size_spin.setToolTip("0 = không chia batch. Nhập số >0 để chia nhỏ file in")
+        self.batch_size_spin.setSpecialValueText("0 (không chia)")
         paper_row.addWidget(self.batch_size_spin)
 
         paper_row.addStretch()
