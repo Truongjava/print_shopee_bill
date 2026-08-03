@@ -193,7 +193,7 @@ def detect_pdf_type(pdf_path: str) -> str:
         return 'tiktok'
 
     # Thử tìm pattern Shopee (Order SN 12 ký tự: 6 số + 6 chữ-số)
-    if re.search(r'\b\d{6}[A-Z0-9]{4,6}\b', first_page_text):
+    if re.search(r'\b\d{6}[A-Z0-9]{4,}\b', first_page_text):
         return 'shopee'
 
     return 'unknown'
@@ -286,7 +286,7 @@ def _parse_shopee_header(full_text: str) -> dict:
         info['print_time'] = m.group(1).strip()
 
     # Đếm tổng số Order SN duy nhất
-    order_sns = set(re.findall(r'\b(\d{6}[A-Z0-9]{4,6})\b', full_text))
+    order_sns = set(re.findall(r'\b(\d{6}[A-Z0-9]{4,10})\b', full_text))
     info['order_qty'] = len(order_sns)
     info['product_qty'] = len(order_sns)
     info['item_qty'] = len(order_sns)
