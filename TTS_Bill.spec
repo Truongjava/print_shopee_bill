@@ -24,7 +24,11 @@ cookie_datas = []
 for c in _basedir.glob('banhang.shopee.vn_*.json'):
     cookie_datas.append((str(c), '.'))
 
-datas = bill_datas + excel_datas + cookie_datas
+# ── Bundle SumatraPDF portable (PDF printing engine) ──
+sumatra = _basedir / 'SumatraPDF.exe'
+sumatra_datas = [(str(sumatra), '.')] if sumatra.exists() else []
+
+datas = bill_datas + excel_datas + cookie_datas + sumatra_datas
 
 a = Analysis(
     ['main_app.py'],
