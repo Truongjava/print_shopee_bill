@@ -1161,7 +1161,6 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 if batch_size > 0 and reader and total_pages > batch_size:
                     total_batches = (total_pages + batch_size - 1) // batch_size
                     if log_cb: log_cb(f'  📦 SumatraPDF: Chia {total_pages} tờ → {total_batches} batch ({batch_size} tờ/batch)', 'info')
-
                     batch_num = 0
                     for start in range(0, total_pages, batch_size):
                         batch_num += 1
