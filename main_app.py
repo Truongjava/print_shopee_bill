@@ -963,59 +963,46 @@ class AutomationWorker(QObject):
             if self._playwright: self._playwright.stop()
         except: pass
 
-_sumatra_exe_cache = None
+_foxit_exe_cache = None
 
 
-def _find_sumatra_exe():
-    """Tìm SumatraPDF — portable hoặc cài đặt hệ thống."""
-    global _sumatra_exe_cache
-    if _sumatra_exe_cache is not None:
-        return _sumatra_exe_cache or ''
-
-    # 1. Ưu tiên portable trong thư mục app (bundled)
-    if getattr(sys, 'frozen', False):
-        local = Path(sys._MEIPASS) / 'SumatraPDF.exe'
-    else:
-        local = BASE_DIR / 'SumatraPDF.exe'
-    if local.exists():
-        _sumatra_exe_cache = str(local)
-        return str(local)
-
-    # 2. Fallback: tìm trong PATH
-    import shutil as _shutil
-    found = _shutil.which('SumatraPDF.exe')
-    if found:
-        _sumatra_exe_cache = found
-        return found
-
-    _sumatra_exe_cache = ''
+def _find_foxit_exe():
+    """Tìm Foxit PDF Reader — dùng XPS Print Path, spool nhẹ ~15MB."""
+    global _foxit_exe_cache
+    if _foxit_exe_cache is not None:
+        return _foxit_exe_cache or ''
+    foxit_paths = [
+        r'C:\Program Files (x86)\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe',
+        r'C:\Program Files\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe',
+    ]
+    for fp in foxit_paths:
+        if Path(fp).exists():
+            _foxit_exe_cache = fp
+            return fp
+    _foxit_exe_cache = ''
     return ''
 
 
-def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60, expected_pages=0):
+def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60):
     """Poll print queue để phát hiện lỗi máy in (kẹt giấy, hết mực...).
     Đợi đến khi job Complete hoặc Error thì trả về.
     timeout: số giây tối đa chờ (mặc định 60s).
-    expected_pages: nếu >0, sẽ verify số trang in thực tế sau khi job Complete.
     Lưu ý: nếu job chưa từng xuất hiện trong queue sau 15s → coi như đã in xong quá nhanh."""
     import subprocess as _sp, os as _os
     deadline = __import__('time').time() + timeout
     last_status = ''
     error_reported = False
     never_seen_deadline = __import__('time').time() + 15  # 15s đầu phải thấy job, nếu không → exit sớm
-    page_verified = False  # Đã verify số trang chưa
     while __import__('time').time() < deadline:
         __import__('time').sleep(5)
         result = _sp.run(['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command',
             f"$jobs = Get-PrintJob -PrinterName '{printer_name}' -ErrorAction SilentlyContinue"
             + (f" | Where-Object {{ $_.DocumentName -like '*{doc_name_hint[:30]}*' }}" if doc_name_hint else "")
-            + " | Select-Object JobStatus, TotalPages, Size | ConvertTo-Json -Compress"
+            + " | Select-Object JobStatus | ConvertTo-Json -Compress"
         ], capture_output=True, text=True,
            creationflags=_sp.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
         status_raw = result.stdout.strip()
         status = ''
-        total_pages = 0
-        job_size = 0
         if status_raw:
             try:
                 import json as _json
@@ -1023,8 +1010,6 @@ def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60,
                 if isinstance(job_info, list):
                     job_info = job_info[0] if job_info else {}
                 status = job_info.get('JobStatus', '')
-                total_pages = job_info.get('TotalPages', 0) or 0
-                job_size = job_info.get('Size', 0) or 0
             except Exception:
                 status = status_raw
 
@@ -1035,30 +1020,6 @@ def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60,
         if status:
             if 'Complete' in status and 'Printing' not in status and 'Spooling' not in status:
                 if log_cb: log_cb(f'  ✅ Job in đã hoàn thành', 'dim')
-                # ── Verify số trang in ──
-                if expected_pages > 0 and not page_verified:
-                    page_verified = True
-                    if total_pages > 0:
-                        if total_pages >= expected_pages:
-                            if log_cb: log_cb(f'  ✅ Verify: {total_pages}/{expected_pages} tờ đã in', 'ok')
-                        elif total_pages >= expected_pages * 0.85:
-                            # Thiếu <15% → có thể do merge 2-up hoặc font rendering
-                            if log_cb: log_cb(f'  ⚠ Verify: {total_pages}/{expected_pages} tờ (thiếu {expected_pages - total_pages} tờ — có thể do merge 2-up)', 'warn')
-                        else:
-                            # Thiếu >15% → có thể PDF lỗi hoặc SumatraPDF crash giữa chừng
-                            if log_cb: log_cb(f'  🛑 THIẾU TRANG! Chỉ in được {total_pages}/{expected_pages} tờ (thiếu {expected_pages - total_pages}). PDF có thể bị lỗi hoặc in bị ngắt giữa chừng!', 'err')
-                            return False
-                    elif job_size > 0:
-                        # Driver không báo TotalPages → dùng Size để ước lượng
-                        # Mỗi tờ GDI spool ~1-2MB, nếu Size < expected_pages * 0.5MB → nghi ngờ
-                        est_pages = job_size / (1024 * 1024 * 1.5)  # ~1.5MB/tờ
-                        if est_pages >= expected_pages * 0.7:
-                            if log_cb: log_cb(f'  ✅ Verify: job spool ~{job_size//1024}KB (~{int(est_pages)} tờ ước lượng)', 'dim')
-                        else:
-                            if log_cb: log_cb(f'  ⚠ Verify: job spool ~{job_size//1024}KB — quá nhỏ cho {expected_pages} tờ, có thể thiếu trang!', 'warn')
-                    else:
-                        # Không có TotalPages lẫn Size → không verify được
-                        if log_cb: log_cb(f'  ℹ Không verify được số trang (driver không báo cáo)', 'dim')
                 return True
 
             error_msgs = {
@@ -1127,11 +1088,11 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
 
     try:
         if fp.lower().endswith('.pdf'):
-            sumatra_exe = _find_sumatra_exe()
-            if not sumatra_exe:
+            foxit_exe = _find_foxit_exe()
+            if not foxit_exe:
                 raise RuntimeError(
-                    'Không tìm thấy SumatraPDF. '
-                    'Vui lòng tải SumatraPDF portable và đặt cạnh app.'
+                    'Không tìm thấy Foxit PDF Reader. '
+                    'Vui lòng cài Foxit PDF Reader để in file PDF.'
                 )
 
             print_path = fp
@@ -1147,7 +1108,7 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 except Exception as e:
                     if log_cb: log_cb(f'  ⚠ Merge 2-up lỗi ({e}) — in file gốc', 'warn')
 
-            if sumatra_exe:
+            if foxit_exe:
                 # ── Đọc số trang để quyết định batch splitting ──
                 try:
                     from pypdf import PdfReader as _PdfReader, PdfWriter as _PdfWriter
@@ -1160,7 +1121,7 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 # ── Batch splitting ──
                 if batch_size > 0 and reader and total_pages > batch_size:
                     total_batches = (total_pages + batch_size - 1) // batch_size
-                    if log_cb: log_cb(f'  📦 SumatraPDF: Chia {total_pages} tờ → {total_batches} batch ({batch_size} tờ/batch)', 'info')
+                    if log_cb: log_cb(f'  📦 Foxit: Chia {total_pages} tờ → {total_batches} batch ({batch_size} tờ/batch)', 'info')
                     batch_num = 0
                     for start in range(0, total_pages, batch_size):
                         batch_num += 1
@@ -1175,19 +1136,14 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
 
                         if log_cb: log_cb(f'  ⏳ Đợi hàng đợi máy in trống...', 'dim')
                         _wait_print_queue(printer_name, max_jobs=0)
-                        if log_cb: log_cb(f'  ▶ Gửi lệnh in qua SumatraPDF (batch {batch_num})...', 'info')
-                        cmd = [sumatra_exe, '-print-to', printer_name, '-silent', batch_path]
+                        if log_cb: log_cb(f'  ▶ Gửi lệnh in qua Foxit (batch {batch_num})...', 'info')
+                        cmd = [foxit_exe, '/t', batch_path, printer_name]
                         result = subprocess.run(cmd, check=False, timeout=3600)
-                        if log_cb: log_cb(f'  ✓ SumatraPDF batch {batch_num} đã thoát (exit code: {result.returncode})', 'dim')
+                        if log_cb: log_cb(f'  ✓ Foxit batch {batch_num} đã thoát (exit code: {result.returncode})', 'dim')
                         if result.returncode != 0:
-                            raise RuntimeError(f'SumatraPDF batch {batch_num} exit code: {result.returncode}')
+                            raise RuntimeError(f'Foxit batch {batch_num} exit code: {result.returncode}')
                         if log_cb: log_cb(f'  🔍 Đang kiểm tra trạng thái in batch {batch_num}...', 'dim')
-                        verify_ok = _check_print_errors(printer_name, doc_name_hint=os.path.basename(batch_path), log_cb=log_cb, expected_pages=end - start)
-                        if not verify_ok:
-                            # Batch này in lỗi — giữ lại file để user in lại thủ công
-                            if log_cb: log_cb(f'  🛑 Batch {batch_num}/{total_batches} IN LỖI — giữ file {os.path.basename(batch_path)} để in lại', 'err')
-                            # Không xóa batch file, tiếp tục batch tiếp theo
-                            continue
+                        _check_print_errors(printer_name, doc_name_hint=os.path.basename(batch_path), log_cb=log_cb)
 
                         if log_cb: log_cb(f'  ✅ Batch {batch_num}/{total_batches} đã in xong', 'ok')
                         try: _os.remove(batch_path)
@@ -1197,16 +1153,14 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                     # ── In thẳng không batch ──
                     if log_cb: log_cb(f'  ⏳ Đợi hàng đợi máy in trống (max_jobs=0)...', 'dim')
                     _wait_print_queue(printer_name, max_jobs=0)
-                    if log_cb: log_cb(f'  ▶ Gửi lệnh in qua SumatraPDF: {os.path.basename(print_path)}', 'info')
-                    cmd = [sumatra_exe, '-print-to', printer_name, '-silent', print_path]
+                    if log_cb: log_cb(f'  ▶ Gửi lệnh in qua Foxit: {os.path.basename(print_path)}', 'info')
+                    cmd = [foxit_exe, '/t', print_path, printer_name]
                     result = subprocess.run(cmd, check=False, timeout=3600)
-                    if log_cb: log_cb(f'  ✓ SumatraPDF đã thoát (exit code: {result.returncode})', 'dim')
+                    if log_cb: log_cb(f'  ✓ Foxit đã thoát (exit code: {result.returncode})', 'dim')
                     if result.returncode != 0:
-                        raise RuntimeError(f'SumatraPDF exit code: {result.returncode}')
+                        raise RuntimeError(f'Foxit exit code: {result.returncode}')
                     if log_cb: log_cb(f'  🔍 Đang kiểm tra trạng thái in...', 'dim')
-                    verify_ok = _check_print_errors(printer_name, doc_name_hint=os.path.basename(print_path), log_cb=log_cb, expected_pages=total_pages)
-                    if not verify_ok:
-                        raise RuntimeError(f'In thất bại — máy in báo lỗi hoặc thiếu trang. File: {os.path.basename(print_path)}')
+                    _check_print_errors(printer_name, doc_name_hint=os.path.basename(print_path), log_cb=log_cb)
                     if log_cb: log_cb(f'  ✅ In hoàn tất', 'ok')
             if temp_merged:
                 def _cleanup(p=temp_merged):
@@ -1941,25 +1895,25 @@ class App(QMainWindow):
         paper_row.addStretch()
         gb_layout.addLayout(paper_row)
 
-        # ── Engine in PDF: SumatraPDF (GDI Print Path, spool ~1-2MB/tờ) ──
-        sumatra_detected = _find_sumatra_exe()
+        # ── Engine in PDF: Foxit PDF Reader (XPS Print Path, spool ~15MB) ──
+        foxit_detected = _find_foxit_exe()
 
         # Label hiển thị engine in PDF
         engine_label = QLabel("Engine in PDF:")
         engine_label.setFixedWidth(130)
         engine_label.setStyleSheet("font-weight: 600; color: #1E293B; font-size: 10pt;")
 
-        sumatra_status = QLabel()
-        sumatra_status.setWordWrap(True)
-        if sumatra_detected:
-            sumatra_status.setText("✅ SumatraPDF — GDI Print Path (spool ~1-2MB/tờ)")
-            sumatra_status.setStyleSheet("color: #059669; font-size: 9pt; padding: 2px 0;")
+        foxit_status = QLabel()
+        foxit_status.setWordWrap(True)
+        if foxit_detected:
+            foxit_status.setText("✅ Foxit PDF Reader — XPS Print Path (spool ~15MB)")
+            foxit_status.setStyleSheet("color: #059669; font-size: 9pt; padding: 2px 0;")
         else:
-            sumatra_status.setText("⚠ Chưa có SumatraPDF — Vui lòng tải SumatraPDF portable!")
-            sumatra_status.setStyleSheet("color: #DC2626; font-weight: 600; font-size: 10pt; padding: 2px 0;")
+            foxit_status.setText("⚠ Chưa cài Foxit PDF Reader — Vui lòng cài để in file PDF!")
+            foxit_status.setStyleSheet("color: #DC2626; font-weight: 600; font-size: 10pt; padding: 2px 0;")
 
         gb_layout.addWidget(engine_label)
-        gb_layout.addWidget(sumatra_status)
+        gb_layout.addWidget(foxit_status)
 
         # ── Chrome info ──
         chrome_info = QLabel("🌐 Sử dụng Google Chrome có sẵn trên máy")

@@ -41,6 +41,3 @@ package-lock.json
 
 # ── File cũ không dùng nữa ──
 bill_calculate/app.py
-
-# ── SumatraPDF runtime artifacts ──
-SumatraPDF-settings.txt
