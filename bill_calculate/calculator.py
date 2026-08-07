@@ -285,13 +285,33 @@ def _parse_shopee_header(full_text: str) -> dict:
     if m:
         info['print_time'] = m.group(1).strip()
 
-    # Đếm tổng số Order SN duy nhất
+    # Đếm tổng số Order SN duy nhất từ picking list
     order_sns = set(re.findall(r'\b(\d{6}[A-Z0-9]{4,10})\b', full_text))
     info['order_qty'] = len(order_sns)
     info['product_qty'] = len(order_sns)
     info['item_qty'] = len(order_sns)
 
     return info
+
+
+def _extract_order_sns_from_shipping(shipping_pdf_path: str) -> list[str]:
+    """
+    Trích xuất Order SN ĐẦY ĐỦ từ các trang shipping label.
+    Shipping label có dòng: Mã đơn hàng: 2607313WXH0RK0
+    Trả về list các Order SN đã sắp xếp.
+    """
+    import pdfplumber
+    full_sns: set[str] = set()
+    try:
+        with pdfplumber.open(shipping_pdf_path) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text() or ''
+                # Pattern: Mã đơn hàng: XXXX (Order SN đầy đủ, thường 12-16 ký tự)
+                found = re.findall(r'Mã đơn hàng:\s*(\d{6}[A-Z0-9]{4,10})', text)
+                full_sns.update(found)
+    except Exception:
+        pass
+    return sorted(full_sns)
 
 
 def _group_words_by_row(pdf_path: str, picking_only: bool = True) -> list[list[dict]]:
@@ -344,6 +364,107 @@ def _group_words_by_row(pdf_path: str, picking_only: bool = True) -> list[list[d
     return all_lines
 
 
+def _extract_shopee_lines(pdf_path: str) -> list[dict]:
+    """
+    Dùng extract_chars() thay vì extract_words() để tránh lỗi merge text
+    giữa các cột. Chỉ quét cột SKU phân loại (x bắt đầu ~326) và Số lượng (x~463).
+
+    Trả về list các dòng: {page, y, sku, qty}
+    """
+    from collections import defaultdict
+
+    def _is_shipping_page(text: str) -> bool:
+        return (
+            'mã vận đơn' in text.lower() or
+            'THÔNG TIN ĐƠN HÀNG' in text
+        )
+
+    # ── Hằng số vị trí cột (dựa trên vị trí header "SKU phân loại" ở x=326) ──
+    SKU_COL_START = 324   # Bắt đầu cột SKU phân loại
+    SKU_COL_END = 390     # Kết thúc cột SKU phân loại (trước "Phân loại hàng" ở x=394)
+    QTY_COL_START = 460   # Bắt đầu cột Số lượng
+    QTY_COL_END = 475     # Kết thúc cột Số lượng
+
+    # ── Từ khóa cần bỏ qua ──
+    SKIP_TOKENS = {
+        'sku phân loại', 'sku phan loai', 'phân loại hàng', 'phan loai hang',
+        'phân loại', 'phan loai', 'số lượng', 'so luong',
+    }
+
+    all_lines: list[dict] = []
+
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text() or ''
+
+            # Bỏ qua trang shipping label
+            if _is_shipping_page(page_text):
+                continue
+
+            chars = page.chars
+            if not chars:
+                continue
+
+            # Gom ký tự theo dòng Y (làm tròn 5px — đủ mịn để không gộp 2 dòng sát nhau)
+            rows: dict[int, list] = defaultdict(list)
+            for c in chars:
+                row_y = round(c['top'] / 5) * 5
+                rows[row_y].append(c)
+
+            for y in sorted(rows.keys()):
+                line_chars = sorted(rows[y], key=lambda c: c['x0'])
+
+                # ── Trích xuất SKU từ cột SKU phân loại ──
+                sku_chars = []
+                in_sku_zone = False
+                for c in line_chars:
+                    if SKU_COL_START <= c['x0'] <= SKU_COL_START + 4:
+                        in_sku_zone = True
+                    if in_sku_zone and c['x0'] >= SKU_COL_END:
+                        break
+                    if in_sku_zone:
+                        sku_chars.append(c)
+
+                sku_text = ''.join(c['text'] for c in sku_chars).strip()
+
+                # ── Trích xuất Số lượng ──
+                qty_chars = []
+                in_qty_zone = False
+                for c in line_chars:
+                    if QTY_COL_START <= c['x0'] <= QTY_COL_START + 6:
+                        in_qty_zone = True
+                    if in_qty_zone and c['x0'] >= QTY_COL_END:
+                        break
+                    if in_qty_zone:
+                        qty_chars.append(c)
+
+                qty_text = ''.join(c['text'] for c in qty_chars).strip()
+
+                # ── Làm sạch SKU ──
+                if sku_text:
+                    sku_lower = sku_text.lower()
+                    # Bỏ qua dòng header
+                    if any(skip in sku_lower for skip in SKIP_TOKENS):
+                        sku_text = ''
+                    # Chỉ giữ ký tự hợp lệ trong SKU: A-Z, a-z, 0-9, -
+                    sku_text = re.sub(r'[^A-Za-z0-9-]', '', sku_text)
+
+                # ── Làm sạch Qty: chỉ giữ chữ số ──
+                if qty_text:
+                    qty_text = re.sub(r'[^0-9]', '', qty_text)
+
+                # Chỉ thêm dòng nếu có ít nhất SKU hoặc Qty
+                if sku_text or qty_text:
+                    all_lines.append({
+                        'page': page.page_number,
+                        'y': y,
+                        'sku': sku_text,
+                        'qty': qty_text,
+                    })
+
+    return all_lines
+
+
 def extract_order_counts_shopee(
     pdf_path: str,
     master_skus: set[str],
@@ -353,268 +474,106 @@ def extract_order_counts_shopee(
 ) -> tuple[dict[str, int], dict]:
     """
     Trích xuất số đơn hàng cho mỗi Seller SKU từ Shopee Phiếu xuất hàng PDF.
-    Dùng column-position parsing: xác định cột SKU phân loại, Số lượng, Order SN
-    dựa vào vị trí X trên trang.
+
+    Cách tiếp cận: dùng extract_chars() (thay vì extract_words) để tránh lỗi
+    merge text giữa các cột. Chỉ quét cột SKU phân loại (x=326, thẳng hàng với
+    header) và cột Số lượng (x=463). Bỏ qua cột SKU chính (x=29) vì dễ gây
+    false positive khi SKU dài bị ngắt dòng.
 
     Cột trong Shopee PDF:
       - # (x ~ 15)
-      - SKU (x ~ 29)
-      - Hình ảnh sản phẩm (x ~ 57)
-      - Tên sản phẩm (x ~ 119) — có thể chứa SKU bị merge vào text
-      - SKU phân loại (x ~ 310-410) ← SELLER SKU CHÍNH
-      - Phân loại hàng (x ~ 390-440) ← dự phòng: đôi khi SKU nằm ở đây
-      - Số lượng (x ~ 440-500)
-      - Order SN (x ~ 500+)
+      - SKU chính (x ~ 29) — KHÔNG DÙNG, dễ false positive
+      - Tên sản phẩm (x ~ 119)
+      - SKU phân loại (x ~ 326-390) ← CHỈ DÙNG CỘT NÀY
+      - Phân loại hàng (x ~ 394-458)
+      - Số lượng (x ~ 463)
+      - Order SN (x ~ 511+)
 
     Trả về: ({seller_sku: tong_so_qty}, header_info)
     """
-    all_lines = _group_words_by_row(pdf_path)
+    lines = _extract_shopee_lines(pdf_path)
 
-    # Tập hợp text đầy đủ để parse header
+    # Tập hợp text đầy đủ để parse header (từ tất cả trang)
     full_text = ' '.join(
-        ' '.join(w['text'] for w in line['words'])
-        for line in all_lines
+        line['sku'] + ' ' + line['qty']
+        for line in lines
     )
     header_info = _parse_shopee_header(full_text)
 
     counts: dict[str, int] = defaultdict(int)
 
-    # ── Helper: kiểm tra một token có phải SKU hợp lệ không ──
-    def _is_sku_token(t: str) -> bool:
-        """SKU: chứa ít nhất 1 chữ cái, có thể có số và dấu gạch ngang (kể cả kết thúc bằng -)."""
-        if not t:
-            return False
-        if t.lower() in ('sku phân loại', 'sku phan loai', 'phân loại hàng',
-                         'phan loai hang', 'phân loại', 'phan loai'):
-            return False
-        # Chấp nhận SKU kết thúc bằng dấu - (prefix bị ngắt dòng)
-        return bool(re.match(r'^(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-?$', t))
+    # ── Xử lý tuần tự từng dòng ──
+    pending_prefix = None  # SKU kết thúc bằng "-" cần ghép với dòng sau
+    pending_qty = None     # Qty từ dòng có pending_prefix
 
-    def _try_extract_sku_from_text(t: str) -> str:
-        """
-        Thử trích xuất SKU từ text bị merge với tiếng Việt.
-        VD: 'Bột Khử Mùi9BTRA-2' → '9BTRA-2'
-            'Triệu6TOTI' → '6TOTI'
+    for line in lines:
+        sku = line['sku']
+        qty_str = line['qty']
 
-        Chiến lược: tìm mọi SKU-like pattern, chỉ lấy những cái
-        nằm ở CUỐI chuỗi, trả về cái dài nhất.
-        """
-        sku_pattern = r'(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*'
-        all_matches = [m.group(0) for m in re.finditer(sku_pattern, t)]
-        if not all_matches:
-            return ''
-
-        # Chỉ giữ candidates kết thúc ở cuối chuỗi
-        end_candidates = [c for c in all_matches if t.rfind(c) + len(c) == len(t)]
-        if not end_candidates:
-            return ''
-
-        return max(end_candidates, key=len)
-
-    # ── Duyệt từng dòng, trích xuất SKU + Qty + Order SN ──
-    pending_sku = None  # SKU từ dòng trước (khi bị wrap)
-    pending_qty = None  # Qty từ dòng trước
-    pending_prefix = None  # Prefix SKU (kết thúc bằng -) cần ghép với dòng sau
-
-    for line in all_lines:
-        words = line['words']
-        if not words:
-            continue
-
-        sku = ''
-        qty_str = ''
-
-        # ── Pass 1: quét theo vị trí cột ──
-        sku_parts = []  # Gộp tất cả từ ở vị trí SKU phân loại (có thể bị tách)
-        for w in words:
-            x = w['x0']
-            t = w['text'].strip()
-
-            # Cột SKU phân loại (x ~ 305-380) — gộp tất cả từ (VD: "ANTQ-3-" + "6MET01")
-            if 305 <= x <= 380:
-                if _is_sku_token(t):
-                    sku_parts.append(t)
-
-            # Cột Số lượng (x ~ 435-505)
-            if 435 <= x <= 505 and not qty_str:
-                if t.isdigit():
-                    qty_str = t
-
-        sku = ''.join(sku_parts) if sku_parts else ''
-
-        # ── Pass 2: nếu chưa tìm thấy SKU, quét Phân loại hàng (x ~ 390-440) ──
-        # CHỈ chấp nhận nếu token khớp với master hoặc retail (tránh false positive)
-        if not sku:
-            for w in words:
-                x = w['x0']
-                t = w['text'].strip()
-                if 385 <= x <= 445:
-                    if _is_sku_token(t) and (t in master_skus or (retail_lookup and t in retail_lookup)):
-                        sku = t
-                        break
-                    # Thử extract từ text merge (VD: 'Bột Khử Mùi9BTRA-2')
-                    extracted = _try_extract_sku_from_text(t)
-                    if extracted and (extracted in master_skus or (retail_lookup and extracted in retail_lookup)):
-                        sku = extracted
-                        break
-
-        # ── Pass 2b: quét cột SKU chính (x ~ 25-60) — fallback khi SKU phân loại trống ──
-        if not sku:
-            for w in words:
-                x = w['x0']
-                t = w['text'].strip()
-                if 25 <= x <= 60:
-                    if _is_sku_token(t) and (t in master_skus or (retail_lookup and t in retail_lookup)):
-                        sku = t
-                        break
-
-        # ── Pass 2c: quét Tên sản phẩm (x ~ 115-200) tìm SKU bị merge vào text ──
-        if not sku:
-            for w in words:
-                x = w['x0']
-                t = w['text'].strip()
-                if 110 <= x <= 210:
-                    extracted = _try_extract_sku_from_text(t)
-                    if extracted:
-                        # Thử trim dần từ trái nếu candidate chứa ký tự thừa từ tiếng Việt
-                        # VD: "i9BTRA-2" → trim "i" → "9BTRA-2"
-                        candidate = extracted
-                        while candidate and len(candidate) > 1:
-                            if candidate in master_skus or (retail_lookup and candidate in retail_lookup):
-                                sku = candidate
-                                break
-                            # Cắt ký tự ASCII letter đầu tiên (tàn dư từ từ đứng trước)
-                            if candidate[0].isascii() and candidate[0].isalpha():
-                                candidate = candidate[1:]
-                            else:
-                                break
-                        if sku:
-                            break
-
-        # ── Pass 3: nếu vẫn chưa có qty, tìm số trong phân loại hàng ──
-        if not qty_str:
-            for w in words:
-                x = w['x0']
-                t = w['text'].strip()
-                if 385 <= x <= 505:
-                    # Tìm số đứng một mình hoặc cuối chuỗi
-                    if t.isdigit():
-                        qty_str = t
-                        break
-            # Fallback: số bị dính vào cuối text (VD: "LIPPI19" → qty=19)
-            if not qty_str:
-                phan_loai_parts = []
-                for w in words:
-                    wx = w['x0']; wt = w['text'].strip()
-                    if 385 <= wx <= 445:
-                        phan_loai_parts.append(wt)
-                phan_loai_text = ''.join(phan_loai_parts)
-                m = re.search(r'(\d+)$', phan_loai_text)
-                if m:
-                    qty_str = m.group(1)
-
-        # ── Xử lý pending prefix (SKU ngắt dòng kiểu "ANT01-3-" + "6MET" + "01") ──
-        if sku and not sku.endswith('-') and pending_prefix:
+        # ── Trường hợp 1: Dòng này là continuation của pending prefix ──
+        # VD: pending_prefix="ANT01-3-" + sku="6MET01" → "ANT01-3-6MET01"
+        if sku and pending_prefix:
             combined = pending_prefix + sku
-            # Chỉ combine nếu kết quả khớp master hoặc retail
             if (combined in master_skus or
                 combined in prefix_map or
                 (retail_lookup and combined in retail_lookup)):
+                # Ghép thành công → flush với Qty
                 final_qty = qty_str if qty_str else (pending_qty or '1')
                 _match_and_add(counts, combined, int(final_qty),
                                master_skus, prefix_map, ambiguous_map, retail_lookup)
                 pending_prefix = None
-                pending_sku = None
                 pending_qty = None
                 continue
             elif not qty_str:
-                # SKU có thể bị tách làm nhiều dòng (VD: "6MET" + "01" → "6MET01")
-                # Dòng hiện tại không có Qty riêng → tiếp tục accumulate
+                # Combined chưa khớp + không có Qty → tiếp tục accumulate
+                # VD: "ANT01-3-" + "6MET" + "01" → cần thêm "01" nữa
                 pending_prefix = combined
-                pending_sku = combined
                 continue
             else:
-                # Combined SKU không tồn tại VÀ dòng này có Qty riêng
-                # → đây là 2 sản phẩm khác nhau, flush pending độc lập
-                if pending_qty:
-                    _match_and_add(counts, pending_prefix, int(pending_qty),
-                                   master_skus, prefix_map, ambiguous_map, retail_lookup)
-                else:
-                    _match_and_add(counts, pending_prefix, 1,
-                                   master_skus, prefix_map, ambiguous_map, retail_lookup)
-                pending_prefix = None
-                pending_sku = None
-                pending_qty = None
-                # Tiếp tục xử lý SKU hiện tại (không continue)
-
-        # ── Xử lý token số ở vị trí SKU khi có pending prefix (VD: "01" sau "6MET") ──
-        if not sku and pending_prefix:
-            # Tìm token ở vị trí SKU (x=305-380) có thể là continuation (chỉ toàn số/chữ)
-            for w in words:
-                x = w['x0']
-                t = w['text'].strip()
-                if 305 <= x <= 380 and t.isascii() and all(c.isalnum() for c in t) and len(t) <= 4:
-                    combined = pending_prefix + t
-                    # Kiểm tra combined có khớp master/retail hoặc ít nhất có định dạng SKU
-                    if (combined in master_skus or
-                        combined in prefix_map or
-                        (retail_lookup and combined in retail_lookup)):
-                        final_qty = pending_qty or '1'
-                        _match_and_add(counts, combined, int(final_qty),
-                                       master_skus, prefix_map, ambiguous_map, retail_lookup)
-                        pending_prefix = None
-                        pending_sku = None
-                        pending_qty = None
-                    else:
-                        # Vẫn có thể là continuation → accumulate tiếp
-                        pending_prefix = combined
-                        pending_sku = combined
-                    break
-
-        # ── Xử lý dòng chính ──
-        if sku:
-            # Flush pending trước khi xử lý SKU mới
-            if pending_sku and pending_sku != sku and pending_qty:
-                _match_and_add(counts, pending_sku, int(pending_qty),
+                # Combined không khớp NHƯNG dòng này có Qty riêng
+                # → flush pending như 1 SKU độc lập, rồi xử lý tiếp sku hiện tại
+                _match_and_add(counts, pending_prefix, int(pending_qty or '1'),
                                master_skus, prefix_map, ambiguous_map, retail_lookup)
+                pending_prefix = None
+                pending_qty = None
+                # Không continue — xử lý sku hiện tại bên dưới
 
+        # ── Trường hợp 2: Dòng có Qty nhưng không có SKU (VD: Qty ở dòng tiếp theo của continuation) ──
+        if not sku and qty_str and pending_prefix:
+            # Qty này thuộc về pending_prefix
+            _match_and_add(counts, pending_prefix, int(qty_str),
+                           master_skus, prefix_map, ambiguous_map, retail_lookup)
+            pending_prefix = None
+            pending_qty = None
+            continue
+
+        # ── Trường hợp 3: Dòng có SKU đầy đủ + Qty ──
+        if sku:
             if sku.endswith('-'):
-                # SKU dạng prefix (VD: "ANT01-3-") → lưu lại chờ dòng sau
+                # SKU dạng prefix → lưu lại chờ dòng continuation
                 pending_prefix = sku
-                pending_sku = sku
                 pending_qty = qty_str if qty_str else None
             elif qty_str:
                 # Dòng đầy đủ: SKU + Qty
                 _match_and_add(counts, sku, int(qty_str),
                                master_skus, prefix_map, ambiguous_map, retail_lookup)
-                pending_sku = None
-                pending_qty = None
                 pending_prefix = None
-            else:
-                # SKU không có Qty → dùng mặc định 1 (mỗi dòng = 1 đơn)
-                _match_and_add(counts, sku, 1,
+                pending_qty = None
+            elif pending_prefix:
+                # SKU không kết thúc bằng "-" nhưng có pending_prefix
+                # → continuation của pending (VD: "01" sau "6MET")
+                combined = pending_prefix + sku
+                final_qty = pending_qty or '1'
+                _match_and_add(counts, combined, int(final_qty),
                                master_skus, prefix_map, ambiguous_map, retail_lookup)
-                pending_sku = None
-                pending_qty = None
                 pending_prefix = None
+                pending_qty = None
+            # else: SKU không có Qty và không có pending → bỏ qua
+            # (đây chính là các dòng rác như BOG6 ở cột SKU chính)
 
-        elif qty_str and pending_sku:
-            # Dòng này có Qty nhưng không có SKU → gán cho pending
-            _match_and_add(counts, pending_sku, int(qty_str),
-                           master_skus, prefix_map, ambiguous_map, retail_lookup)
-            pending_sku = None
-            pending_qty = None
-            pending_prefix = None
-
-    # ── Flush pending cuối cùng ──
-    if pending_prefix and pending_qty:
-        _match_and_add(counts, pending_prefix, int(pending_qty),
-                       master_skus, prefix_map, ambiguous_map, retail_lookup)
-    elif pending_sku and pending_qty:
-        _match_and_add(counts, pending_sku, int(pending_qty),
-                       master_skus, prefix_map, ambiguous_map, retail_lookup)
-    elif pending_sku:
-        _match_and_add(counts, pending_sku, 1,
+    # ── Flush pending cuối cùng (nếu còn) ──
+    if pending_prefix:
+        _match_and_add(counts, pending_prefix, int(pending_qty or '1'),
                        master_skus, prefix_map, ambiguous_map, retail_lookup)
 
     return dict(counts), header_info
@@ -1457,6 +1416,7 @@ def process_all(
     from collections import defaultdict
     merged_order_counts: dict[str, int] = defaultdict(int)
     total_order_qty = 0   # Số đơn hàng thực tế (Order quantity từ header)
+    all_order_sns: set[str] = set()  # Gom tất cả Order SN
 
     for pdf_path in pdf_files:
         print(f"\nXu ly: {os.path.basename(pdf_path)}")
@@ -1496,6 +1456,13 @@ def process_all(
         if pdf_type != 'shopee':
             order_qty = header_info.get('order_qty', 0)
         total_order_qty += order_qty
+        # Gom Order SN ĐẦY ĐỦ từ shipping label (dài hơn picking list)
+        if pdf_type == 'shopee' and shipping_path and os.path.exists(shipping_path):
+            full_sns = _extract_order_sns_from_shipping(shipping_path)
+            all_order_sns.update(full_sns)
+        elif header_info.get('order_sns'):
+            # Fallback: lấy từ picking list (có thể thiếu vài ký tự cuối)
+            all_order_sns.update(header_info['order_sns'])
         print(f"   Tim thay {len(order_counts)} Seller SKU, {order_qty} don hang (header), {sum(order_counts.values())} mat hang")
 
     if not merged_order_counts:
@@ -1517,6 +1484,18 @@ def process_all(
 
     fill_template(results, template_path, output_path, carrier=carrier, order_count=total_order_qty, source_label='Shopee')
 
+    # ── Lưu danh sách Order SN ra file .txt ──
+    if all_order_sns:
+        order_sn_path = os.path.join(output_dir, f"{prefix}Order_SN_{now.strftime('%m-%d_%H-%M-%S')}.txt")
+        with open(order_sn_path, 'w', encoding='utf-8') as f:
+            f.write(f"# Order SN — {carrier or 'tat ca'} — {now.strftime('%d/%m/%Y %H:%M:%S')}\n")
+            f.write(f"# Tong: {len(all_order_sns)} Order SN\n")
+            f.write(f"# SL don: {total_order_qty}\n")
+            f.write(f"# SL mat hang: {sum(merged_order_counts.values())}\n\n")
+            for sn in sorted(all_order_sns):
+                f.write(sn + '\n')
+        print(f"   📋 Đã lưu {len(all_order_sns)} Order SN → {os.path.basename(order_sn_path)}")
+
     # ── Xuất PDF từ file Excel vừa tạo ──
     pdf_path = ''
     try:
@@ -1527,6 +1506,8 @@ def process_all(
     files_dict = {"xlsx_report": output_path}
     if pdf_path:
         files_dict["pdf_report"] = pdf_path
+    if all_order_sns:
+        files_dict["order_sn_txt"] = order_sn_path
 
     # ── Dọn file tách trung gian (_phieu_xuat.pdf) ──
     cleanup_count = 0

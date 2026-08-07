@@ -27,7 +27,11 @@ from PySide6.QtGui import (
     QFont, QTextCursor,
 )
 
-from playwright.sync_api import sync_playwright
+# ═══════════════════════════════════════════════════════════
+# Lazy imports: playwright & calculator chỉ import khi cần dùng
+# để tránh khởi động app chậm (mỗi cái ~2-4 giây)
+# - sync_playwright → import trong run_automation()
+# - calculator modules → import trong run_calculator()
 
 # ═══════════════════════════════════════════════════════════
 # Paths & config
@@ -37,13 +41,18 @@ BILL_DIR = BASE_DIR / 'bill_calculate'
 UPLOAD_DIR = BILL_DIR / 'uploads'
 sys.path.insert(0, str(BILL_DIR))
 
-try:
-    from calculator import process_all, extract_report_data, aggregate_reports, detect_pdf_type
-except ImportError:
-    process_all = None
-    extract_report_data = None
-    aggregate_reports = None
-    detect_pdf_type = None
+# Lazy import: calculator modules sẽ được import trong run_calculator()
+# để tránh kéo pdfplumber + openpyxl + win32com (~6s) lúc khởi động
+
+_calculator_cache = None
+
+def _get_calculator():
+    """Lazy import calculator module — chỉ load khi cần, cache lại cho lần sau."""
+    global _calculator_cache
+    if _calculator_cache is None:
+        from calculator import process_all, extract_report_data, aggregate_reports, detect_pdf_type
+        _calculator_cache = (process_all, extract_report_data, aggregate_reports, detect_pdf_type)
+    return _calculator_cache
 
 # ═══════════════════════════════════════════════════════════
 # Frozen / source mode — detect paths
@@ -210,6 +219,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
 
     if not browser_ok:
         try:
+            from playwright.sync_api import sync_playwright  # lazy import (~2.3s)
             playwright = sync_playwright().start()
             launch_opts = {'headless': False, 'channel': 'chrome',
                            'args': ['--disable-blink-features=AutomationControlled']}
@@ -385,7 +395,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 const input = label.querySelector('input[type="checkbox"]');
                 if (input) input.dispatchEvent(new Event('change', {bubbles: true}));
             }''')
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(5000)
 
             checked = page.evaluate(
                 "() => { const all = document.querySelectorAll('input[type=\"checkbox\"]:checked'); let c = 0; for (const cb of all) { if (!cb.closest('[data-testid=\"mass-ship-checkbox-all\"]')) c++; } return c; }")
@@ -405,6 +415,9 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 except Exception:
                     pass
                 break
+
+            # ── 5.5. Delay trước khi click pickup ──
+            page.wait_for_timeout(5000)
 
             # ── 6. Click pickup button ──
             state_cb('printing', 'Đang yêu cầu lấy hàng...')
@@ -732,7 +745,10 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
 
 
 def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_path, log_cb, carrier=''):
-    if process_all is None:
+    # Lazy import: tránh kéo pdfplumber + openpyxl + win32com (~6s) lúc khởi động app
+    try:
+        process_all, _, _, _ = _get_calculator()
+    except ImportError:
         log_cb('✗ Calculator không khả dụng (thiếu module calculator)', 'err'); return []
     if not Path(master_path).exists(): log_cb(f'✗ Không tìm thấy master_data: {master_path}', 'err'); return []
     if not Path(template_path).exists(): log_cb(f'✗ Không tìm thấy template: {template_path}', 'err'); return []
@@ -2302,7 +2318,7 @@ class App(QMainWindow):
                 try:
                     # Nếu là file gộp → tự tách lấy shipping label
                     actual_fp = fp
-                    if detect_pdf_type and detect_pdf_type(fp) == 'shopee':
+                    if _get_calculator()[3](fp) == 'shopee':
                         from calculator import split_shopee_pdf
                         out_dir = os.path.dirname(fp) or 'outputs'
                         _, shipping_path, _ = split_shopee_pdf(fp, out_dir)
@@ -2375,7 +2391,7 @@ class App(QMainWindow):
 
             for f in all_files:
                 fname = Path(f).name.lower()
-                if detect_pdf_type(f) == 'shopee':
+                if _get_calculator()[3](f) == 'shopee':
                     # Tự tách file gộp
                     from calculator import split_shopee_pdf
                     out_dir = os.path.dirname(f) or 'outputs'
@@ -2579,7 +2595,7 @@ class App(QMainWindow):
             for f in files:
                 self._ag_log("dim", f"  📄 {Path(f).name}")
             try:
-                result = aggregate_reports(files, out_dir, template)
+                result = _get_calculator()[2](files, out_dir, template)
                 self._ag_log("ok", f"  ✓ {result['rows']} SKU | Qty={result['tong_qty']} | "
                                     f"Sold={result['tong_sold']} | Promo={result['tong_promo']}")
                 fp = result['files'].get('xlsx_report')
@@ -2629,7 +2645,7 @@ class App(QMainWindow):
                 return
             self._ag_log("dim", f"  📄 Tìm thấy {len(files)} file")
             try:
-                result = aggregate_reports(files, str(today_dir), template)
+                result = _get_calculator()[2](files, str(today_dir), template)
                 self._ag_log("ok", f"  ✓ {result['rows']} SKU | Qty={result['tong_qty']} | "
                                     f"Sold={result['tong_sold']} | Promo={result['tong_promo']}")
                 for key, lbl in [('xlsx_report', '📊'), ('pdf_report', '📄')]:
