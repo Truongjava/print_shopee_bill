@@ -447,7 +447,7 @@ def _extract_shopee_lines(pdf_path: str) -> list[dict]:
                     if any(skip in sku_lower for skip in SKIP_TOKENS):
                         sku_text = ''
                     # Chỉ giữ ký tự hợp lệ trong SKU: A-Z, a-z, 0-9, -
-                    sku_text = re.sub(r'[^A-Za-z0-9-]', '', sku_text)
+                    sku_text = re.sub(r'[^A-Za-z0-9+\- ]', '', sku_text)
 
                 # ── Làm sạch Qty: chỉ giữ chữ số ──
                 if qty_text:
