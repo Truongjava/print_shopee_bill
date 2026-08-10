@@ -933,13 +933,10 @@ class AutomationWorker(QObject):
                         fp = r['files'].get('pdf_report') or r['files'].get('xlsx_report')
                         if fp and Path(fp).exists():
                             try:
-                                for copy_num in [1, 2]:
-                                    self.log_message.emit('info', f'  🖨️ In bản {copy_num}/2: {Path(fp).name}')
-                                    _print_file(fp, printer, pdf_settings=pdf_settings, batch_size=batch_size,
-                                                log_cb=lambda m, t='': self.log_message.emit(t, m))
-                                    if copy_num == 1:
-                                        import time as _t3; _t3.sleep(2)
-                                self.log_message.emit('ok', f'  ✓ Đã in báo cáo 2 bản: {Path(fp).name}')
+                                self.log_message.emit('info', f'  🖨️ In báo cáo: {Path(fp).name}')
+                                _print_file(fp, printer, pdf_settings=pdf_settings, batch_size=batch_size,
+                                            log_cb=lambda m, t='': self.log_message.emit(t, m))
+                                self.log_message.emit('ok', f'  ✓ Đã in báo cáo: {Path(fp).name}')
                             except Exception as e:
                                 self.log_message.emit('err', f'  ✗ Lỗi in báo cáo: {e}')
 
@@ -2457,13 +2454,10 @@ class App(QMainWindow):
                                 self._add_result(fp)
                                 if do_print and key == 'pdf_report':
                                     try:
-                                        for copy_num in [1, 2]:
-                                            self._test_log.emit("info", f"  🖨️ In bản {copy_num}/2: {Path(fp).name}")
-                                            _print_file(fp, printer, pdf_settings=pdf_settings, batch_size=batch_size,
-                                                        log_cb=lambda m, t='': self._test_log.emit(t, m))
-                                            if copy_num == 1:
-                                                import time as _t3; _t3.sleep(2)
-                                        self._test_log.emit("ok", f"  🖨️ Báo cáo 2 bản: {Path(fp).name}")
+                                        self._test_log.emit("info", f"  🖨️ In báo cáo: {Path(fp).name}")
+                                        _print_file(fp, printer, pdf_settings=pdf_settings, batch_size=batch_size,
+                                                    log_cb=lambda m, t='': self._test_log.emit(t, m))
+                                        self._test_log.emit("ok", f"  🖨️ Đã in báo cáo: {Path(fp).name}")
                                     except Exception as e:
                                         self._test_log.emit("err", f"  ✗ Lỗi in báo cáo: {e}")
                 except Exception as e:
