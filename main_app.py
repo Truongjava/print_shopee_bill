@@ -1014,13 +1014,13 @@ def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60)
     Đợi đến khi job Complete hoặc Error thì trả về.
     timeout: số giây tối đa chờ (mặc định 60s).
     Lưu ý: nếu job chưa từng xuất hiện trong queue sau 15s → coi như đã in xong quá nhanh."""
-    import subprocess as _sp, os as _os
-    deadline = __import__('time').time() + timeout
+    import subprocess as _sp, os as _os, time as _time_pe
+    deadline = _time_pe.time() + timeout
     last_status = ''
     error_reported = False
-    never_seen_deadline = __import__('time').time() + 15  # 15s đầu phải thấy job, nếu không → exit sớm
-    while __import__('time').time() < deadline:
-        __import__('time').sleep(5)
+    never_seen_deadline = _time_pe.time() + 15  # 15s đầu phải thấy job, nếu không → exit sớm
+    while _time_pe.time() < deadline:
+        _time_pe.sleep(5)
         result = _sp.run(['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command',
             f"$jobs = Get-PrintJob -PrinterName '{printer_name}' -ErrorAction SilentlyContinue"
             + (f" | Where-Object {{ $_.DocumentName -like '*{doc_name_hint[:30]}*' }}" if doc_name_hint else "")
@@ -1073,7 +1073,7 @@ def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60)
                 if log_cb: log_cb(f'  ✅ Job in đã rời queue (đã in xong)', 'dim')
                 return True
             # Neu da qua 15s ma chua bao gio thay job → may in xu ly qua nhanh, coi nhu xong
-            if __import__('time').time() > never_seen_deadline:
+            if _time_pe.time() > never_seen_deadline:
                 if log_cb: log_cb(f'  ⚡ Job in qua nhanh, khong thay trong queue — coi nhu da in xong', 'dim')
                 return True
 
@@ -1082,7 +1082,7 @@ def _check_print_errors(printer_name, doc_name_hint='', log_cb=None, timeout=60)
     return True
 
 
-def _wait_print_queue(printer_name, max_jobs=2, timeout=30):
+def _wait_print_queue(printer_name, max_jobs=2, timeout=30, log_cb=None):
     """Đợi hàng đợi máy in ≤ max_jobs rồi mới gửi job mới (tránh quá tải RAM máy in).
     timeout: số giây tối đa chờ (mặc định 30s)."""
     import subprocess as _sp, time as _t
@@ -1098,14 +1098,20 @@ def _wait_print_queue(printer_name, max_jobs=2, timeout=30):
             count = 0
         if count <= max_jobs:
             if waited:
-                print(f'   ✓ Hàng đợi đã trống (sau ~{int(_t.time() - (deadline - timeout))}s)')
+                msg = f'   ✓ Hàng đợi đã trống (sau ~{int(_t.time() - (deadline - timeout))}s)'
+                if log_cb: log_cb(msg, 'dim')
+                else: print(msg)
             return
         if not waited:
             waited = True
-            print(f'   ⏳ Hàng đợi có {count} job(s) — đợi giảm xuống ≤{max_jobs}...')
+            msg = f'   ⏳ Hàng đợi có {count} job(s) — đợi giảm xuống ≤{max_jobs}...'
+            if log_cb: log_cb(msg, 'dim')
+            else: print(msg)
         _t.sleep(1)  # kiểm tra mỗi 1 giây
     # Nếu hết timeout mà vẫn còn job → log cảnh báo và in tiếp (tránh treo vĩnh viễn)
-    print(f'   ⚠ Hết {timeout}s chờ — hàng đợi vẫn còn job, in tiếp...')
+    msg = f'   ⚠ Hết {timeout}s chờ — hàng đợi vẫn còn job, in tiếp...'
+    if log_cb: log_cb(msg, 'warn')
+    else: print(msg)
 
 
 def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, batch_size=0):
@@ -1134,60 +1140,60 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 except Exception as e:
                     if log_cb: log_cb(f'  ⚠ Merge 2-up lỗi ({e}) — in file gốc', 'warn')
 
-            if foxit_exe:
-                # ── Đọc số trang để quyết định batch splitting ──
-                try:
-                    from pypdf import PdfReader as _PdfReader, PdfWriter as _PdfWriter
-                    reader = _PdfReader(print_path)
-                    total_pages = len(reader.pages)
-                except Exception:
-                    reader = None
-                    total_pages = 0
+            # ── Đọc số trang để quyết định batch splitting ──
+            try:
+                from pypdf import PdfReader as _PdfReader, PdfWriter as _PdfWriter
+                reader = _PdfReader(print_path)
+                total_pages = len(reader.pages)
+            except Exception:
+                reader = None
+                total_pages = 0
 
-                # ── Batch splitting ──
-                if batch_size > 0 and reader and total_pages > batch_size:
-                    total_batches = (total_pages + batch_size - 1) // batch_size
-                    if log_cb: log_cb(f'  📦 Foxit: Chia {total_pages} tờ → {total_batches} batch ({batch_size} tờ/batch)', 'info')
-                    batch_num = 0
-                    for start in range(0, total_pages, batch_size):
-                        batch_num += 1
-                        end = min(start + batch_size, total_pages)
-                        if log_cb: log_cb(f'  🖨️ Batch {batch_num}/{total_batches} (tờ {start+1}-{end})...', 'info')
-                        batch_writer = _PdfWriter()
-                        for i in range(start, end):
-                            batch_writer.add_page(reader.pages[i])
-                        batch_path = print_path + f'.batch{batch_num}.pdf'
-                        with open(batch_path, 'wb') as bf:
-                            batch_writer.write(bf)
+            # ── Batch splitting ──
+            if batch_size > 0 and reader and total_pages > batch_size:
+                total_batches = (total_pages + batch_size - 1) // batch_size
+                if log_cb: log_cb(f'  📦 Foxit: Chia {total_pages} tờ → {total_batches} batch ({batch_size} tờ/batch)', 'info')
+                batch_num = 0
+                for start in range(0, total_pages, batch_size):
+                    batch_num += 1
+                    end = min(start + batch_size, total_pages)
+                    if log_cb: log_cb(f'  🖨️ Batch {batch_num}/{total_batches} (tờ {start+1}-{end})...', 'info')
+                    batch_writer = _PdfWriter()
+                    for i in range(start, end):
+                        batch_writer.add_page(reader.pages[i])
+                    batch_path = print_path + f'.batch{batch_num}.pdf'
+                    with open(batch_path, 'wb') as bf:
+                        batch_writer.write(bf)
 
-                        if log_cb: log_cb(f'  ⏳ Đợi hàng đợi máy in trống...', 'dim')
-                        _wait_print_queue(printer_name, max_jobs=0)
-                        if log_cb: log_cb(f'  ▶ Gửi lệnh in qua Foxit (batch {batch_num})...', 'info')
-                        cmd = [foxit_exe, '/t', batch_path, printer_name]
+                    if log_cb: log_cb(f'  ⏳ Đợi hàng đợi máy in trống...', 'dim')
+                    _wait_print_queue(printer_name, max_jobs=0, log_cb=log_cb)
+                    if log_cb: log_cb(f'  ▶ Gửi lệnh in qua Foxit (batch {batch_num})...', 'info')
+                    cmd = [foxit_exe, '/t', batch_path, printer_name]
+                    try:
                         result = subprocess.run(cmd, check=False, timeout=3600)
                         if log_cb: log_cb(f'  ✓ Foxit batch {batch_num} đã thoát (exit code: {result.returncode})', 'dim')
                         if result.returncode != 0:
                             raise RuntimeError(f'Foxit batch {batch_num} exit code: {result.returncode}')
                         if log_cb: log_cb(f'  🔍 Đang kiểm tra trạng thái in batch {batch_num}...', 'dim')
                         _check_print_errors(printer_name, doc_name_hint=os.path.basename(batch_path), log_cb=log_cb)
-
                         if log_cb: log_cb(f'  ✅ Batch {batch_num}/{total_batches} đã in xong', 'ok')
+                    finally:
                         try: _os.remove(batch_path)
                         except: pass
 
-                else:
-                    # ── In thẳng không batch ──
-                    if log_cb: log_cb(f'  ⏳ Đợi hàng đợi máy in trống (max_jobs=0)...', 'dim')
-                    _wait_print_queue(printer_name, max_jobs=0)
-                    if log_cb: log_cb(f'  ▶ Gửi lệnh in qua Foxit: {os.path.basename(print_path)}', 'info')
-                    cmd = [foxit_exe, '/t', print_path, printer_name]
-                    result = subprocess.run(cmd, check=False, timeout=3600)
-                    if log_cb: log_cb(f'  ✓ Foxit đã thoát (exit code: {result.returncode})', 'dim')
-                    if result.returncode != 0:
-                        raise RuntimeError(f'Foxit exit code: {result.returncode}')
-                    if log_cb: log_cb(f'  🔍 Đang kiểm tra trạng thái in...', 'dim')
-                    _check_print_errors(printer_name, doc_name_hint=os.path.basename(print_path), log_cb=log_cb)
-                    if log_cb: log_cb(f'  ✅ In hoàn tất', 'ok')
+            else:
+                # ── In thẳng không batch ──
+                if log_cb: log_cb(f'  ⏳ Đợi hàng đợi máy in trống (max_jobs=0)...', 'dim')
+                _wait_print_queue(printer_name, max_jobs=0, log_cb=log_cb)
+                if log_cb: log_cb(f'  ▶ Gửi lệnh in qua Foxit: {os.path.basename(print_path)}', 'info')
+                cmd = [foxit_exe, '/t', print_path, printer_name]
+                result = subprocess.run(cmd, check=False, timeout=3600)
+                if log_cb: log_cb(f'  ✓ Foxit đã thoát (exit code: {result.returncode})', 'dim')
+                if result.returncode != 0:
+                    raise RuntimeError(f'Foxit exit code: {result.returncode}')
+                if log_cb: log_cb(f'  🔍 Đang kiểm tra trạng thái in...', 'dim')
+                _check_print_errors(printer_name, doc_name_hint=os.path.basename(print_path), log_cb=log_cb)
+                if log_cb: log_cb(f'  ✅ In hoàn tất', 'ok')
             if temp_merged:
                 def _cleanup(p=temp_merged):
                     import time; time.sleep(5)
@@ -1267,7 +1273,7 @@ def _merge_pdf_2up(pdf_path):
         with open(temp_path, 'wb') as f:
             writer.write(f)
         return temp_path
-    except:
+    except Exception:
         return None
 
 def _get_printers() -> list:
@@ -1277,7 +1283,8 @@ def _get_printers() -> list:
         for info in win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS, None, 1):
             name = info[2].strip() if info[2] else ''
             if name: printers.append(name)
-    except: pass
+    except ImportError:
+        pass
     if not printers:
         try:
             import subprocess

@@ -13,7 +13,6 @@ import re
 from collections import defaultdict
 from datetime import datetime
 
-from fpdf import FPDF
 import pdfplumber
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -313,56 +312,6 @@ def _extract_order_sns_from_shipping(shipping_pdf_path: str) -> list[str]:
     except Exception:
         pass
     return sorted(full_sns)
-
-
-def _group_words_by_row(pdf_path: str, picking_only: bool = True) -> list[list[dict]]:
-    """
-    Trích xuất tất cả words từ PDF, nhóm theo dòng (Y position ~20px).
-    Nếu picking_only=True, chỉ lấy từ trang phiếu xuất (bỏ qua shipping label).
-    Trả về list các dòng, mỗi dòng là list words đã sắp xếp theo X.
-    """
-    from collections import defaultdict
-
-    def _is_picking_page(text: str) -> bool:
-        return (
-            'phiếu xuất hàng' in text.lower() or
-            ('# SKU' in text and 'SKU phân loại' in text)
-        )
-
-    def _is_shipping_page(text: str) -> bool:
-        return (
-            'mã vận đơn' in text.lower() or
-            'THÔNG TIN ĐƠN HÀNG' in text
-        )
-
-    all_lines = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            words = page.extract_words(keep_blank_chars=True, x_tolerance=3)
-            if not words:
-                continue
-
-            # Kiểm tra loại trang
-            if picking_only:
-                page_text = page.extract_text() or ''
-                if _is_shipping_page(page_text) and not _is_picking_page(page_text):
-                    continue  # Bỏ qua trang shipping label
-
-            # Nhóm từ theo Y (làm tròn 10px — tránh banker's rounding gộp dòng)
-            rows = defaultdict(list)
-            for w in words:
-                row_y = round(w['top'] / 10) * 10
-                rows[row_y].append(w)
-
-            for y in sorted(rows.keys()):
-                line_words = sorted(rows[y], key=lambda w: w['x0'])
-                all_lines.append({
-                    'page': page.page_number,
-                    'y': y,
-                    'words': line_words,
-                })
-
-    return all_lines
 
 
 def _extract_shopee_lines(pdf_path: str) -> list[dict]:
@@ -936,7 +885,7 @@ def export_xlsx_to_pdf(xlsx_path: str, pdf_path: str = '') -> str:
         abs_pdf = _os.path.abspath(pdf_path)
         workbook = excel.Workbooks.Open(abs_xlsx)
         # 0 = xlTypePDF
-        workbook.ExportAsFixedFormat(0, abs_pdf)
+        workbook.ExportAsFixedFormat(win32com.client.constants.xlTypePDF, abs_pdf)
         print(f"   📄 Đã xuất PDF: {_os.path.basename(pdf_path)}")
         return pdf_path
     except Exception as e:

@@ -32,7 +32,7 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
-        'openpyxl', 'pdfplumber', 'pypdf', 'playwright', 'fpdf',
+        'openpyxl', 'pdfplumber', 'pypdf', 'playwright',
         'pythoncom', 'win32com', 'win32com.client', 'win32print',
         'pywintypes', 'win32api',
         'PIL', 'PIL._imagingtk', 'PIL._tkinter_finder',
