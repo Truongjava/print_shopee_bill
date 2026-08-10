@@ -142,7 +142,7 @@ def _detect_captcha(page, log_cb, state_cb, stop_event):
                     ss = f'captcha_{datetime.now().strftime("%m-%d_%H-%M-%S")}.png'
                     page.screenshot(path=ss)
                     log_cb(f'  📸 Screenshot: {ss}', 'info')
-                except: pass
+                except Exception: pass
                 # Đợi user giải CAPTCHA (polling mỗi 2s, tối đa 5 phút)
                 import time as _t
                 for _ in range(150):  # 150 × 2s = 5 phút
@@ -655,7 +655,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
             if not create_clicked:
                 log_cb('  ⚠ Không tìm thấy nút "Tạo phiếu đã chọn"', 'warn')
                 try: context.remove_listener('page', _awb_on_new_page)
-                except: pass
+                except Exception: pass
                 continue
 
             log_cb('  ⏳ Đợi tab awbprint + PDF (tối đa 120 giây)...', 'dim')
@@ -664,7 +664,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 if stop_event and stop_event.is_set():
                     log_cb('  ⏹ Đã dừng theo yêu cầu', 'warn')
                     try: context.remove_listener('page', _awb_on_new_page)
-                    except: pass
+                    except Exception: pass
                     return all_batch_pdfs if all_batch_pdfs else pdf_files, playwright, browser, carrier_counts
                 if not new_page_ref:
                     for p in context.pages:
@@ -677,7 +677,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                         try:
                             if _wait_i == 5:
                                 try: awb_page.wait_for_load_state('networkidle', timeout=30000)
-                                except: pass
+                                except Exception: pass
                             if _wait_i >= 10 and not downloaded_files:
                                 for btn_text in ['In', 'In phiếu', 'Print', 'Tải về', 'Download', 'Lưu']:
                                     try:
@@ -686,12 +686,12 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                                             btn.click(force=True, timeout=3000)
                                             log_cb(f'  ✓ Đã bấm "{btn_text}" trên tab awbprint', 'dim')
                                             break
-                                    except: pass
-                        except: pass
+                                    except Exception: pass
+                        except Exception: pass
                 page.wait_for_timeout(2000)
 
             try: context.remove_listener('page', _awb_on_new_page)
-            except: pass
+            except Exception: pass
 
             if downloaded_files:
                 log_cb(f'  ✅ Đã lấy {len(downloaded_files)} file PDF', 'ok')
@@ -701,11 +701,11 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                     ss = str(Path(output_dir) / f'debug_no_dl_{carrier or "all"}_batch{batch_num}.png')
                     page.screenshot(path=ss)
                     log_cb(f'  📸 Screenshot: {ss}', 'dim')
-                except: pass
+                except Exception: pass
                 awb_page = new_page_ref[0] if new_page_ref else None
                 if awb_page and not awb_page.is_closed():
                     try: awb_page.wait_for_load_state('networkidle', timeout=15000)
-                    except: pass
+                    except Exception: pass
                     awb_page.wait_for_timeout(5000)
                     try:
                         save_path = str(Path(output_dir) / f'Shopee_{carrier or "all"}_batch{batch_num}_{datetime.now().strftime("%m-%d_%H-%M-%S")}.pdf')
@@ -720,11 +720,11 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                     if not p.is_closed():
                         p.close()
                         log_cb('  ✓ Đã đóng tab awbprint', 'dim')
-                except: pass
+                except Exception: pass
 
             page.wait_for_timeout(500)
             try: page.bring_to_front()
-            except: pass
+            except Exception: pass
             page.wait_for_timeout(500)
 
             for f in downloaded_files:
@@ -926,7 +926,7 @@ class AutomationWorker(QObject):
                     shipping_f = Path(out_dir) / f'{stem}_shipping_label.pdf'
                     if shipping_f.exists():
                         try: shipping_f.unlink()
-                        except: pass
+                        except Exception: pass
 
                 # In báo cáo sau khi tính toán
                 if auto_print and carrier_results:
@@ -984,10 +984,10 @@ class AutomationWorker(QObject):
         self._stop_event.set()
         try:
             if self._browser: self._browser.close()
-        except: pass
+        except Exception: pass
         try:
             if self._playwright: self._playwright.stop()
-        except: pass
+        except Exception: pass
 
 _foxit_exe_cache = None
 
@@ -1179,7 +1179,7 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                         if log_cb: log_cb(f'  ✅ Batch {batch_num}/{total_batches} đã in xong', 'ok')
                     finally:
                         try: _os.remove(batch_path)
-                        except: pass
+                        except Exception: pass
 
             else:
                 # ── In thẳng không batch ──
@@ -1198,7 +1198,7 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 def _cleanup(p=temp_merged):
                     import time; time.sleep(5)
                     try: _os.remove(p)
-                    except: pass
+                    except Exception: pass
                 threading.Timer(5, _cleanup).start()
             return
 
@@ -1208,7 +1208,7 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
             try:
                 import pythoncom, win32com.client, time as _t_excel
                 # Đợi queue trống + delay cứng để đảm bảo 2 job không bị gộp
-                _wait_print_queue(printer_name)
+                _wait_print_queue(printer_name, log_cb=log_cb)
                 _t_excel.sleep(1)
                 pythoncom.CoInitialize()
                 excel = win32com.client.Dispatch("Excel.Application")
@@ -1292,7 +1292,7 @@ def _get_printers() -> list:
             for line in result.stdout.strip().split('\n'):
                 name = line.strip()
                 if name and name not in printers: printers.append(name)
-        except: pass
+        except Exception: pass
     return printers
 
 
