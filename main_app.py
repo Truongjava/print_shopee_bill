@@ -3127,12 +3127,14 @@ class App(QMainWindow):
             QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn ít nhất 1 hãng vận chuyển để in.")
             return
 
-        # ── Tính output_dir với date subfolder ──
+        # ── Tính output_dir với date/time subfolder ──
+        now = datetime.now()
         base_dir = config['output_dir']
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        out_dir = str(Path(base_dir) / today_str)
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H-%M-%S')
+        out_dir = str(Path(base_dir) / date_str / time_str)
         os.makedirs(out_dir, exist_ok=True)
-        config['output_dir'] = out_dir  # Ghi đè = path có ngày
+        config['output_dir'] = out_dir  # Ghi đè = path có ngày + giờ
 
         self.running = True
         self._set_buttons("running")
