@@ -885,7 +885,7 @@ def export_xlsx_to_pdf(xlsx_path: str, pdf_path: str = '') -> str:
         abs_pdf = _os.path.abspath(pdf_path)
         workbook = excel.Workbooks.Open(abs_xlsx)
         # 0 = xlTypePDF
-        workbook.ExportAsFixedFormat(win32com.client.constants.xlTypePDF, abs_pdf)
+        workbook.ExportAsFixedFormat(0, abs_pdf)  # 0 = xlTypePDF
         print(f"   📄 Đã xuất PDF: {_os.path.basename(pdf_path)}")
         return pdf_path
     except Exception as e:
