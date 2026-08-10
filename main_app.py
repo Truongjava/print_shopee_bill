@@ -529,8 +529,11 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 }''')
                 info = json.loads(all_checkboxes_info)
                 for cbi in info.get('checkboxes', []):
+                    text = cbi['text'].strip()
+                    if not text:
+                        continue  # bỏ qua checkbox rỗng (ẩn, không có text)
                     marker = '☑' if cbi['checked'] else '☐'
-                    log_cb(f'  {marker} {cbi["text"]}', 'dim')
+                    log_cb(f'  {marker} {text}', 'dim')
                 if info.get('unTicked', 0) > 0:
                     log_cb(f'  🗑 Đã bỏ tick {info["unTicked"]} checkbox', 'dim')
                 page.wait_for_timeout(500)
