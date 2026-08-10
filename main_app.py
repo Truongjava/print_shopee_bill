@@ -304,6 +304,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         else:
             max_batches = 50  # fallback nếu không scan được
 
+        batch_num = 0  # khởi tạo phòng trường hợp max_batches = 0
         for batch_num in range(1, max_batches + 1):
             # ── Reload orders page (batch 1 already loaded above) ──
             if batch_num > 1:
@@ -1196,6 +1197,8 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
             return
 
         if fp.lower().endswith('.xlsx') or fp.lower().endswith('.xls'):
+            excel = None
+            workbook = None
             try:
                 import pythoncom, win32com.client, time as _t_excel
                 # Đợi queue trống + delay cứng để đảm bảo 2 job không bị gộp
@@ -1208,16 +1211,26 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 workbook.PrintOut(ActivePrinter=printer_name, FitToPagesWide=1, FitToPagesTall=False)
                 # Đợi Excel spool xong job ra queue rồi mới đóng
                 _t_excel.sleep(2)
-                workbook.Close(False); excel.Quit(); pythoncom.CoUninitialize()
-                # Đợi job đã chắc chắn vào queue
-                _t_excel.sleep(1)
                 return
             except Exception:
-                try: pythoncom.CoUninitialize()
-                except: pass
-            raise RuntimeError(
-                'Không thể in file Excel. Máy cần cài Microsoft Excel.'
-            )
+                raise RuntimeError(
+                    'Không thể in file Excel. Máy cần cài Microsoft Excel.'
+                )
+            finally:
+                try:
+                    if workbook is not None:
+                        workbook.Close(False)
+                except Exception:
+                    pass
+                try:
+                    if excel is not None:
+                        excel.Quit()
+                except Exception:
+                    pass
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
     except Exception:
         raise
 
@@ -2409,8 +2422,8 @@ class App(QMainWindow):
                 if _get_calculator()[3](f) == 'shopee':
                     # Tự tách file gộp
                     from calculator import split_shopee_pdf
-                    out_dir = os.path.dirname(f) or 'outputs'
-                    picking_path, shipping_path, _ = split_shopee_pdf(f, out_dir)
+                    split_dir = os.path.dirname(f) or 'outputs'
+                    picking_path, shipping_path, _ = split_shopee_pdf(f, split_dir)
                     if picking_path:
                         self._test_log.emit("info", f"  📋 Tách phiếu xuất: {Path(picking_path).name}")
                         picking_files.append(picking_path)
@@ -2450,7 +2463,8 @@ class App(QMainWindow):
                 self._test_log.emit("info", f"📊 {len(picking_files)} file → tính toán...")
                 try:
                     results = run_calculator(picking_files, out_dir, master, retail, self._template_real,
-                                             lambda m, t='': self._test_log.emit(t, m))
+                                             lambda m, t='': self._test_log.emit(t, m),
+                                             send_api=self.test_send_api_cb.isChecked())
                     for r in results:
                         self._test_log.emit("ok", f"  ✓ {r['rows']} SKU | Qty={r['tong_qty']} | Sold={r['tong_sold']} | Promo={r['tong_promo']}")
                         # Thêm file kết quả vào list
