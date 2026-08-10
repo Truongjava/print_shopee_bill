@@ -188,12 +188,13 @@ def detect_pdf_type(pdf_path: str) -> str:
     if re.search(r'Order quantity:\s*\d+', first_page_text):
         return 'tiktok'
 
-    # Fallback: thử tìm pattern TikTok (Order ID 15+ chữ số)
-    if re.search(r'\b\d{15,}\b', first_page_text):
-        return 'tiktok'
+    # Fallback: đếm pattern để đoán (chỉ khi có ít nhất 2 match)
+    tiktok_matches = len(re.findall(r'\b\d{15,}\b', first_page_text))
+    shopee_matches = len(re.findall(r'\b\d{6}[A-Z0-9]{4,}\b', first_page_text))
 
-    # Thử tìm pattern Shopee (Order SN 12 ký tự: 6 số + 6 chữ-số)
-    if re.search(r'\b\d{6}[A-Z0-9]{4,}\b', first_page_text):
+    if tiktok_matches >= 2 and tiktok_matches > shopee_matches:
+        return 'tiktok'
+    if shopee_matches >= 2 and shopee_matches > tiktok_matches:
         return 'shopee'
 
     return 'unknown'
@@ -379,11 +380,12 @@ def _extract_shopee_lines(pdf_path: str) -> list[dict]:
             'THÔNG TIN ĐƠN HÀNG' in text
         )
 
-    # ── Hằng số vị trí cột (dựa trên vị trí header "SKU phân loại" ở x=326) ──
-    SKU_COL_START = 324   # Bắt đầu cột SKU phân loại
-    SKU_COL_END = 390     # Kết thúc cột SKU phân loại (trước "Phân loại hàng" ở x=394)
-    QTY_COL_START = 460   # Bắt đầu cột Số lượng
-    QTY_COL_END = 475     # Kết thúc cột Số lượng
+    # ── Dò vị trí cột từ header row (dòng chứa "SKU phân loại" và "Số lượng") ──
+    SKU_COL_START = 324   # Fallback: bắt đầu cột SKU phân loại
+    SKU_COL_END = 390     # Fallback: kết thúc cột SKU phân loại
+    QTY_COL_START = 460   # Fallback: bắt đầu cột Số lượng
+    QTY_COL_END = 475     # Fallback: kết thúc cột Số lượng
+    _header_detected = False
 
     # ── Từ khóa cần bỏ qua ──
     SKIP_TOKENS = {
@@ -400,6 +402,30 @@ def _extract_shopee_lines(pdf_path: str) -> list[dict]:
             # Bỏ qua trang shipping label
             if _is_shipping_page(page_text):
                 continue
+
+            # ── Dò tìm vị trí cột từ header row (chỉ làm 1 lần) ──
+            if not _header_detected and ('sku phân loại' in page_text.lower()):
+                chars = page.chars
+                if chars:
+                    # Gom ký tự theo dòng Y
+                    header_rows: dict[int, list] = defaultdict(list)
+                    for c in chars:
+                        row_y = round(c['top'] / 5) * 5
+                        header_rows[row_y].append(c)
+                    for y in sorted(header_rows.keys()):
+                        line_text = ''.join(c['text'] for c in sorted(header_rows[y], key=lambda c2: c2['x0'])).lower()
+                        if 'sku phân loại' in line_text and 'số lượng' in line_text:
+                            # Tìm vị trí X của từng cột trong dòng header
+                            for c in sorted(header_rows[y], key=lambda c2: c2['x0']):
+                                if c['x0'] > 200 and 'sku' in c['text'].lower() and 'phân loại' in line_text:
+                                    SKU_COL_START = int(c['x0']) - 2
+                                if c['x0'] > 300 and 'phân loại' in c['text'].lower():
+                                    SKU_COL_END = int(c['x0']) - 2
+                                if c['x0'] > 350 and 'số' in c['text'].lower() and 'lượng' in line_text:
+                                    QTY_COL_START = int(c['x0']) - 2
+                            QTY_COL_END = QTY_COL_START + 20
+                            _header_detected = True
+                            break
 
             chars = page.chars
             if not chars:

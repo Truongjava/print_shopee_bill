@@ -2772,7 +2772,7 @@ class App(QMainWindow):
     def _populate_table(self, table: QTableWidget, file_path: str, table_type: str):
         try:
             from openpyxl import load_workbook
-            wb = load_workbook(file_path, data_only=True, read_only=True)
+            wb = load_workbook(file_path, data_only=True)
             ws = wb.active
 
             headers = [str(cell.value) if cell.value else f"Col{i}"
@@ -3140,6 +3140,9 @@ class App(QMainWindow):
         if not config['carriers']:
             QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn ít nhất 1 hãng vận chuyển để in.")
             return
+        if config['auto_print'] and not config['printer']:
+            QMessageBox.warning(self, "Cảnh báo", "Bật 'In tự động' nhưng chưa chọn máy in.\nVào tab Cấu hình In để chọn máy in.")
+            return
 
         # ── Tính output_dir với date/time subfolder ──
         now = datetime.now()
@@ -3355,7 +3358,7 @@ class App(QMainWindow):
         # Gọi trực tiếp là an toàn; invokeMethod + BlockingQueuedConnection có thể deadlock nếu worker đang bận
         self._worker.shutdown()
         self._worker_thread.quit()
-        self._worker_thread.wait(5000)
+        self._worker_thread.wait(2000)  # Giảm từ 5s xuống 2s để không freeze UI khi thoát
         event.accept()
 
 

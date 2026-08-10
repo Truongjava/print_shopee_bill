@@ -4,7 +4,7 @@
 import sys
 from pathlib import Path
 
-_basedir = Path('.')
+_basedir = Path(SPECPATH)
 _bill_dir = _basedir / 'bill_calculate'
 
 # ── Collect bill_calculate module files ──
