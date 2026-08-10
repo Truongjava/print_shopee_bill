@@ -50,8 +50,8 @@ def _get_calculator():
     """Lazy import calculator module — chỉ load khi cần, cache lại cho lần sau."""
     global _calculator_cache
     if _calculator_cache is None:
-        from calculator import process_all, extract_report_data, aggregate_reports, detect_pdf_type
-        _calculator_cache = (process_all, extract_report_data, aggregate_reports, detect_pdf_type)
+        from calculator import process_all, extract_report_data, aggregate_reports, detect_pdf_type, split_shopee_pdf
+        _calculator_cache = (process_all, extract_report_data, aggregate_reports, detect_pdf_type, split_shopee_pdf)
     return _calculator_cache
 
 # ═══════════════════════════════════════════════════════════
@@ -883,6 +883,29 @@ class AutomationWorker(QObject):
 
                 carrier_results = []
                 if pdf_paths:
+                    # ── Bước 1: Tách shipping label từ PDF gộp ──
+                    _, _, _, detect_fn, split_fn = _get_calculator()
+                    shipping_files = []
+                    for p in pdf_paths:
+                        pdf_type = detect_fn(p)
+                        if pdf_type == 'shopee':
+                            picking_path, shipping_path, _ = split_fn(p, out_dir)
+                            if shipping_path:
+                                shipping_files.append((p, shipping_path))
+
+                    # ── Bước 2: In shipping label TRƯỚC ──
+                    if auto_print and shipping_files:
+                        self.log_message.emit('info', f'🖨️ [{carrier_display}]: In shipping label...')
+                        for orig_p, shipping_f in shipping_files:
+                            if Path(shipping_f).exists():
+                                try:
+                                    _print_file(str(shipping_f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
+                                                log_cb=lambda m, t='': self.log_message.emit(t, m))
+                                    self.log_message.emit('ok', f'  ✓ Đã gửi in: {Path(shipping_f).name}')
+                                except Exception as e:
+                                    self.log_message.emit('err', f'  ✗ Lỗi in {Path(shipping_f).name}: {e}')
+
+                    # ── Bước 3: Tính bill ──
                     self.log_message.emit('info', f'📊 Đang tính bill [{carrier_display}]...')
                     carrier_results = run_calculator(
                         pdf_paths, out_dir, master, retail, template,
@@ -895,20 +918,6 @@ class AutomationWorker(QObject):
                                 self.log_message.emit('info', f'{lbl} {Path(fp).name}')
                                 self.result_file.emit(f'{lbl} {Path(fp).name}')
                     all_results.extend(carrier_results)
-
-                # In shipping label: chỉ in file sinh ra từ PDF vừa tải
-                if auto_print and pdf_paths:
-                    self.log_message.emit('info', f'🖨️ [{carrier_display}]: In shipping label...')
-                    for p in pdf_paths:
-                        stem = Path(p).stem
-                        shipping_f = Path(out_dir) / f'{stem}_shipping_label.pdf'
-                        if shipping_f.exists():
-                            try:
-                                _print_file(str(shipping_f), printer, pdf_settings=pdf_settings, batch_size=batch_size,
-                                            log_cb=lambda m, t='': self.log_message.emit(t, m))
-                                self.log_message.emit('ok', f'  ✓ Đã gửi in: {shipping_f.name}')
-                            except Exception as e:
-                                self.log_message.emit('err', f'  ✗ Lỗi in {shipping_f.name}: {e}')
 
                 # ── Dọn file shipping label (đã in hoặc không cần in) ──
                 for p in pdf_paths:
