@@ -345,7 +345,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 }''')
                 if dismissed:
                     log_cb(f'  ✓ Đã tắt popup "{dismissed}"', 'info')
-                    page.wait_for_timeout(2000)
+                    page.wait_for_timeout(3000)
             except Exception:
                 pass
 
@@ -363,14 +363,14 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                             });
                         }
                     }''')
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(3000)
                     page.evaluate('''() => {
                         const items = document.querySelectorAll('li.page-size-option');
                         for (const item of items) {
                             if (item.textContent.trim() === '200') { item.click(); return; }
                         }
                     }''')
-                    page.wait_for_timeout(5000)
+                    page.wait_for_timeout(3000)
                     log_cb('  ✓ Đã chọn 200 đơn/trang', 'info')
             except Exception as e:
                 log_cb(f'  ⚠ Không chọn được 200/trang: {e}', 'dim')
@@ -396,7 +396,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 const input = label.querySelector('input[type="checkbox"]');
                 if (input) input.dispatchEvent(new Event('change', {bubbles: true}));
             }''')
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(3000)
 
             checked = page.evaluate(
                 "() => { const all = document.querySelectorAll('input[type=\"checkbox\"]:checked'); let c = 0; for (const cb of all) { if (!cb.closest('[data-testid=\"mass-ship-checkbox-all\"]')) c++; } return c; }")
@@ -418,7 +418,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 break
 
             # ── 5.5. Delay trước khi click pickup ──
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(3000)
 
             # ── 6. Click pickup button ──
             state_cb('printing', 'Đang yêu cầu lấy hàng...')
