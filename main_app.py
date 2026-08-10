@@ -1218,9 +1218,9 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
                 # Đợi Excel spool xong job ra queue rồi mới đóng
                 _t_excel.sleep(2)
                 return
-            except Exception:
+            except Exception as e:
                 raise RuntimeError(
-                    'Không thể in file Excel. Máy cần cài Microsoft Excel.'
+                    f'Không thể in file Excel: {e}'
                 )
             finally:
                 try:
