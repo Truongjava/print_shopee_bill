@@ -747,7 +747,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
         return pdf_files, playwright, browser, carrier_counts
 
 
-def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_path, log_cb, carrier=''):
+def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_path, log_cb, carrier='', send_api=True):
     # Lazy import: tránh kéo pdfplumber + openpyxl + win32com (~6s) lúc khởi động app
     try:
         process_all, _, _, _ = _get_calculator()
@@ -759,7 +759,7 @@ def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_pat
     for p in pdf_paths:
         shutil.copy2(p, str(UPLOAD_DIR / Path(p).name))
     try:
-        results = process_all(pdf_paths, out_dir, master_path, retail_path, carrier, template_path=template_path)
+        results = process_all(pdf_paths, out_dir, master_path, retail_path, carrier, template_path=template_path, send_api=send_api)
         for r in results:
             log_cb(f'  ✓ {r["rows"]} dòng | Qty={r["tong_qty"]} | Sold={r["tong_sold"]} | Promo={r["tong_promo"]}', 'ok')
             for key, fb in r['files'].items():
@@ -2190,6 +2190,11 @@ class App(QMainWindow):
         btn_calc.clicked.connect(self._test_run_calculator)
         gb1_layout.addWidget(btn_calc)
 
+        self.test_send_api_cb = QCheckBox("📡 Gửi Order SN lên API sau khi tính")
+        self.test_send_api_cb.setChecked(True)
+        self.test_send_api_cb.setStyleSheet("color: #64748B; font-weight: 500; font-size: 12px; margin-top: 4px;")
+        gb1_layout.addWidget(self.test_send_api_cb)
+
         layout.addWidget(gb1)
 
         # ── Group 2: In shipping label ──
@@ -2294,7 +2299,8 @@ class App(QMainWindow):
             # Nếu file gộp → process_all() sẽ tự tách phiếu xuất để tính
             try:
                 results = run_calculator(pdfs, out_dir, master, retail, template,
-                                         lambda m, t='': self._test_log.emit(t, m))
+                                         lambda m, t='': self._test_log.emit(t, m),
+                                         send_api=self.test_send_api_cb.isChecked())
                 for r in results:
                     self._test_log.emit("ok", f"  ✓ {r['rows']} SKU | Qty={r['tong_qty']} | Sold={r['tong_sold']} | Promo={r['tong_promo']}")
                     for key, lbl in [('xlsx_report', '📊')]:

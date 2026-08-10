@@ -1377,6 +1377,7 @@ def process_all(
     retail_path: str | None = None,
     carrier: str = '',
     template_path: str | None = None,
+    send_api: bool = True,
 ) -> list[dict]:
     """
     Xu ly toan bo pipeline cho nhieu file PDF cung 1 carrier.
@@ -1496,21 +1497,24 @@ def process_all(
                 f.write(sn + '\n')
         print(f"   📋 Đã lưu {len(all_order_sns)} Order SN → {os.path.basename(order_sn_path)}")
 
-        # ── Gửi Order SN lên API ──
-        try:
-            import urllib.request
-            sns_csv = ','.join(sorted(all_order_sns))
-            data = sns_csv.encode('utf-8')
-            req = urllib.request.Request(
-                'http://88.2.0.55:7016/api/ids/receive',
-                data=data,
-                headers={'Content-Type': 'text/plain'},
-                method='POST',
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — HTTP {resp.status}")
-        except Exception as e:
-            print(f"   ⚠ Không gửi được Order SN lên API: {e}")
+        # ── Gửi Order SN lên API (nếu được bật) ──
+        if send_api:
+            try:
+                import urllib.request
+                sns_csv = ','.join(sorted(all_order_sns))
+                data = sns_csv.encode('utf-8')
+                req = urllib.request.Request(
+                    'http://88.2.0.55:7016/api/ids/receive',
+                    data=data,
+                    headers={'Content-Type': 'text/plain'},
+                    method='POST',
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — HTTP {resp.status}")
+            except Exception as e:
+                print(f"   ⚠ Không gửi được Order SN lên API: {e}")
+        else:
+            print(f"   ⏭ Bỏ qua gửi API (send_api=False)")
 
     # ── Xuất PDF từ file Excel vừa tạo ──
     pdf_path = ''
