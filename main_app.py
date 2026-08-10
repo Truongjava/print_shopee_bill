@@ -763,6 +763,13 @@ def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_pat
         results = process_all(pdf_paths, out_dir, master_path, retail_path, carrier, template_path=template_path, send_api=send_api)
         for r in results:
             log_cb(f'  ✓ {r["rows"]} dòng | Qty={r["tong_qty"]} | Sold={r["tong_sold"]} | Promo={r["tong_promo"]}', 'ok')
+            api_status = r.get('api_status', '')
+            if api_status == 'skip':
+                log_cb('  ⏭ Bỏ qua gửi API', 'dim')
+            elif api_status.startswith('HTTP'):
+                log_cb(f'  📡 Đã gửi Order SN lên API — {api_status}', 'ok')
+            elif api_status:
+                log_cb(f'  ⚠ Gửi API thất bại: {api_status}', 'warn')
             for key, fb in r['files'].items():
                 src, dst = Path(fb), Path(out_dir) / Path(fb).name
                 if src != dst and src.exists(): shutil.copy2(str(src), str(dst)); r['files'][key] = str(dst)

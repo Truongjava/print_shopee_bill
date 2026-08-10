@@ -1473,6 +1473,7 @@ def process_all(
         print(f"   📋 Đã lưu {len(all_order_sns)} Order SN → {os.path.basename(order_sn_path)}")
 
         # ── Gửi Order SN lên API (nếu được bật) ──
+        api_status = ''
         if send_api:
             try:
                 import urllib.request
@@ -1485,10 +1486,13 @@ def process_all(
                     method='POST',
                 )
                 with urllib.request.urlopen(req, timeout=30) as resp:
-                    print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — HTTP {resp.status}")
+                    api_status = f'HTTP {resp.status}'
+                    print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — {api_status}")
             except Exception as e:
+                api_status = f'Lỗi: {e}'
                 print(f"   ⚠ Không gửi được Order SN lên API: {e}")
         else:
+            api_status = 'skip'
             print(f"   ⏭ Bỏ qua gửi API (send_api=False)")
 
     # ── Xuất PDF từ file Excel vừa tạo ──
@@ -1526,6 +1530,7 @@ def process_all(
         "tong_sold": sum(r["qty_sold"] for r in results),
         "tong_promo": sum(r["promo_qty"] for r in results),
         "files": files_dict,
+        "api_status": api_status,
     }]
 
 
