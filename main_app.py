@@ -750,7 +750,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
 def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_path, log_cb, carrier='', send_api=True):
     # Lazy import: tránh kéo pdfplumber + openpyxl + win32com (~6s) lúc khởi động app
     try:
-        process_all, _, _, _ = _get_calculator()
+        process_all, _, _, _, _ = _get_calculator()
     except ImportError:
         log_cb('✗ Calculator không khả dụng (thiếu module calculator)', 'err'); return []
     if not Path(master_path).exists(): log_cb(f'✗ Không tìm thấy master_data: {master_path}', 'err'); return []
