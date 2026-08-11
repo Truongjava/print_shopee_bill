@@ -306,8 +306,8 @@ def _extract_order_sns_from_shipping(shipping_pdf_path: str) -> list[str]:
         with pdfplumber.open(shipping_pdf_path) as pdf:
             for page in pdf.pages:
                 text = page.extract_text() or ''
-                # Pattern: Mã đơn hàng: XXXX (Order SN đầy đủ, thường 12-16 ký tự)
-                found = re.findall(r'Mã đơn hàng:\s*(\d{6}[A-Z0-9]{4,10})', text)
+                # Pattern: Mã đơn hàng: XXXX hoặc OrderSN: XXXX (tùy carrier)
+                found = re.findall(r'(?:Mã đơn hàng|OrderSN):\s*(\d{6}[A-Z0-9]{4,10})', text)
                 full_sns.update(found)
     except Exception:
         pass
