@@ -396,7 +396,7 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 const input = label.querySelector('input[type="checkbox"]');
                 if (input) input.dispatchEvent(new Event('change', {bubbles: true}));
             }''')
-            page.wait_for_timeout(15000)
+            page.wait_for_timeout(7500)
 
             checked = page.evaluate(
                 "() => { const all = document.querySelectorAll('input[type=\"checkbox\"]:checked'); let c = 0; for (const cb of all) { if (!cb.closest('[data-testid=\"mass-ship-checkbox-all\"]')) c++; } return c; }")
