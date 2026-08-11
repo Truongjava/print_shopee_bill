@@ -1460,6 +1460,9 @@ def process_all(
 
     fill_template(results, template_path, output_path, carrier=carrier, order_count=total_order_qty, source_label='Shopee')
 
+    # ── Khởi tạo api_status (phòng trường hợp không có Order SN) ──
+    api_status = ''
+
     # ── Lưu danh sách Order SN ra file .txt ──
     if all_order_sns:
         order_sn_path = os.path.join(output_dir, f"{prefix}Order_SN_{now.strftime('%m-%d_%H-%M-%S')}.txt")
@@ -1473,7 +1476,6 @@ def process_all(
         print(f"   📋 Đã lưu {len(all_order_sns)} Order SN → {os.path.basename(order_sn_path)}")
 
         # ── Gửi Order SN lên API (nếu được bật) ──
-        api_status = ''
         if send_api:
             try:
                 import urllib.request
