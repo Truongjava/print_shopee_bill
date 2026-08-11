@@ -1477,22 +1477,30 @@ def process_all(
 
         # ── Gửi Order SN lên API (nếu được bật) ──
         if send_api:
-            try:
-                import urllib.request
-                sns_csv = ','.join(sorted(all_order_sns))
-                data = sns_csv.encode('utf-8')
-                req = urllib.request.Request(
-                    'http://88.2.0.55:7016/api/ids/receive',
-                    data=data,
-                    headers={'Content-Type': 'text/plain'},
-                    method='POST',
-                )
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    api_status = f'HTTP {resp.status}'
-                    print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — {api_status}")
-            except Exception as e:
-                api_status = f'Lỗi: {e}'
-                print(f"   ⚠ Không gửi được Order SN lên API: {e}")
+            import urllib.request, time as _t_api
+            sns_csv = ','.join(sorted(all_order_sns))
+            data = sns_csv.encode('utf-8')
+            api_status = ''
+            for attempt in range(1, 4):  # retry 3 lần
+                try:
+                    req = urllib.request.Request(
+                        'http://88.2.0.55:7016/api/ids/receive',
+                        data=data,
+                        headers={'Content-Type': 'text/plain'},
+                        method='POST',
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        api_status = f'HTTP {resp.status}'
+                        print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — {api_status}")
+                        break
+                except Exception as e:
+                    api_status = f'Lỗi: {e}'
+                    if attempt < 3:
+                        wait = 2 ** attempt  # 2s, 4s, 8s
+                        print(f"   ⚠ Gửi API thất bại (lần {attempt}/3): {e} — retry sau {wait}s...")
+                        _t_api.sleep(wait)
+                    else:
+                        print(f"   ⚠ Không gửi được Order SN lên API sau 3 lần: {e}")
         else:
             api_status = 'skip'
             print(f"   ⏭ Bỏ qua gửi API (send_api=False)")
