@@ -1490,7 +1490,7 @@ def process_all(
                         method='POST',
                     )
                     with urllib.request.urlopen(req, timeout=30) as resp:
-                        api_status = f'HTTP {resp.status}'
+                        api_status = f'HTTP {resp.status} ({len(all_order_sns)} Order SN)'
                         print(f"   📡 Đã gửi {len(all_order_sns)} Order SN lên API — {api_status}")
                         break
                 except Exception as e:
