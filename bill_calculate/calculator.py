@@ -1510,20 +1510,20 @@ def process_all(
     if all_order_sns:
         files_dict["order_sn_txt"] = order_sn_path
 
-    # ── Dọn file tách trung gian (_phieu_xuat.pdf) ──
+    # ── Dọn file tách trung gian (_phieu_xuat.pdf + _shipping_label.pdf) ──
     cleanup_count = 0
     for pdf_path in pdf_files:
         stem = os.path.splitext(os.path.basename(pdf_path))[0]
-        # Xóa file phiếu xuất đã tách (không cần giữ)
-        picking_f = os.path.join(output_dir, f'{stem}_phieu_xuat.pdf')
-        if os.path.exists(picking_f):
-            try:
-                os.remove(picking_f)
-                cleanup_count += 1
-            except Exception:
-                pass
+        for suffix in ['_phieu_xuat.pdf', '_shipping_label.pdf']:
+            tmp_f = os.path.join(output_dir, f'{stem}{suffix}')
+            if os.path.exists(tmp_f):
+                try:
+                    os.remove(tmp_f)
+                    cleanup_count += 1
+                except Exception:
+                    pass
     if cleanup_count > 0:
-        print(f'   🗑 Đã dọn {cleanup_count} file phiếu xuất trung gian')
+        print(f'   🗑 Đã dọn {cleanup_count} file trung gian')
 
     return [{
         "base_name": f"Combined {carrier or 'all'}",
