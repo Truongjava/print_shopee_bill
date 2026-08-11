@@ -1210,17 +1210,30 @@ def _print_file(file_path, printer_name, pdf_settings='paper=A4', log_cb=None, b
             return
 
         if fp.lower().endswith('.xlsx') or fp.lower().endswith('.xls'):
-            # File Excel đã được export sang PDF từ trước — in PDF thay vì in Excel
-            pdf_path = fp.rsplit('.', 1)[0] + '.pdf'
-            if _os.path.exists(pdf_path):
-                if log_cb: log_cb(f'  ℹ File Excel đã có PDF — in bản PDF', 'dim')
-                _print_file(pdf_path, printer_name, pdf_settings=pdf_settings, log_cb=log_cb, batch_size=batch_size)
-                return
-            else:
-                raise RuntimeError(
-                    f'Không tìm thấy file PDF cho {os.path.basename(fp)}. '
-                    'File Excel cần được export sang PDF trước khi in.'
-                )
+            import pythoncom, win32com.client, time as _t_excel
+            pythoncom.CoInitialize()
+            excel = None
+            try:
+                # Đợi queue trống + delay cứng để đảm bảo 2 job không bị gộp
+                _wait_print_queue(printer_name, log_cb=log_cb)
+                _t_excel.sleep(1)
+                excel = win32com.client.Dispatch("Excel.Application")
+                excel.Visible = False
+                workbook = excel.Workbooks.Open(_os.path.abspath(fp))
+                workbook.PrintOut(ActivePrinter=printer_name, FitToPagesWide=1, FitToPagesTall=False)
+                # Đợi Excel spool xong job ra queue rồi mới đóng
+                _t_excel.sleep(2)
+                workbook.Close(False)
+            finally:
+                try:
+                    if excel: excel.Quit()
+                except Exception: pass
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception: pass
+            # Đợi job đã chắc chắn vào queue sau khi đóng Excel
+            _t_excel.sleep(1)
+            return
     except Exception:
         raise
 
