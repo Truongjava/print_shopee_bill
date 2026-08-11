@@ -770,6 +770,8 @@ def run_calculator(pdf_paths, output_dir, master_path, retail_path, template_pat
                 log_cb(f'  📡 Đã gửi Order SN lên API — {api_status}', 'ok')
             elif api_status:
                 log_cb(f'  ⚠ Gửi API thất bại: {api_status}', 'warn')
+            else:
+                log_cb('  ℹ Không có Order SN để gửi', 'dim')
             for key, fb in r['files'].items():
                 src, dst = Path(fb), Path(out_dir) / Path(fb).name
                 if src != dst and src.exists(): shutil.copy2(str(src), str(dst)); r['files'][key] = str(dst)
