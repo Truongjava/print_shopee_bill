@@ -449,55 +449,61 @@ def run_automation(cookie_path, output_dir, max_orders, log_cb, state_cb, stop_e
                 page.screenshot(path=str(Path(output_dir) / f'debug_no_pickup_btn_{carrier or "all"}_batch{batch_num}.png'))
                 continue
 
-            # ── 7. Click "Tạo" in popup ──
-            state_cb('printing', 'Đang tạo yêu cầu...')
-            tao_btn = None
-            for _ in range(30):
-                for btn_text in ['Tạo', 'Xác nhận', 'Confirm', 'Create']:
+            # ── 7. Click "Tạo" + 8. Click manual select (retry 3 lần) ──
+            manual_btn_found = False
+            for attempt in range(1, 4):
+                log_cb(f'  🔄 Thử lần {attempt}/3: bấm "Tạo" rồi tìm "Chọn phiếu thủ công"...', 'dim')
+                state_cb('printing', f'Đang tạo yêu cầu (lần {attempt}/3)...')
+                tao_btn = None
+                for _ in range(30):
+                    for btn_text in ['Tạo', 'Xác nhận', 'Confirm', 'Create']:
+                        try:
+                            btn = page.locator(f'button:has-text("{btn_text}")').first
+                            if btn.count() > 0 and btn.is_visible(timeout=500):
+                                tao_btn = btn
+                                break
+                        except Exception:
+                            pass
+                    if tao_btn:
+                        break
+                    page.wait_for_timeout(1000)
+                if tao_btn:
+                    tao_btn.click(force=True, timeout=5000)
+                    log_cb(f'  ✓ Đã bấm "Tạo" (lần {attempt})', 'ok')
+                    page.wait_for_timeout(5000)
+                else:
+                    log_cb(f'  ⚠ Không tìm thấy nút "Tạo" (lần {attempt}/3)', 'warn')
+                    continue
+
+                # ── Tìm nút "Chọn phiếu thủ công" ──
+                state_cb('printing', 'Đang chọn loại phiếu...')
+                log_cb(f'  🔍 Đang tìm nút "Chọn phiếu thủ công" (lần {attempt}/3)...', 'dim')
+                for _ in range(30):
                     try:
-                        btn = page.locator(f'button:has-text("{btn_text}")').first
-                        if btn.count() > 0 and btn.is_visible(timeout=500):
-                            tao_btn = btn
+                        clicked = page.evaluate('''() => {
+                            const btns = document.querySelectorAll('button');
+                            for (const btn of btns) {
+                                if (btn.textContent.includes('Chọn phiếu thủ công') && btn.offsetParent !== null) {
+                                    btn.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        }''')
+                        if clicked:
+                            log_cb(f'  ✓ Đã bấm "Chọn phiếu thủ công" (lần {attempt})', 'ok')
+                            manual_btn_found = True
+                            page.wait_for_timeout(2000)
                             break
                     except Exception:
                         pass
-                if tao_btn:
+                    page.wait_for_timeout(1000)
+                if manual_btn_found:
                     break
-                page.wait_for_timeout(1000)
-            if tao_btn:
-                tao_btn.click(force=True, timeout=5000)
-                log_cb('  ✓ Đã bấm "Tạo"', 'ok')
-                page.wait_for_timeout(5000)
-            else:
-                log_cb('  ⚠ Không tìm thấy nút "Tạo" — thử batch tiếp...', 'warn')
-                continue
+                log_cb(f'  ⚠ Chưa tìm thấy "Chọn phiếu thủ công" ở lần {attempt} — thử lại...', 'warn')
 
-            # ── 8. Click manual select ──
-            state_cb('printing', 'Đang chọn loại phiếu...')
-            log_cb('  🔍 Đang tìm nút "Chọn phiếu thủ công"...', 'dim')
-            manual_btn_found = False
-            for _ in range(30):
-                try:
-                    clicked = page.evaluate('''() => {
-                        const btns = document.querySelectorAll('button');
-                        for (const btn of btns) {
-                            if (btn.textContent.includes('Chọn phiếu thủ công') && btn.offsetParent !== null) {
-                                btn.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                    }''')
-                    if clicked:
-                        log_cb('  ✓ Đã bấm "Chọn phiếu thủ công"', 'ok')
-                        manual_btn_found = True
-                        page.wait_for_timeout(2000)
-                        break
-                except Exception:
-                    pass
-                page.wait_for_timeout(1000)
             if not manual_btn_found:
-                log_cb('  ⚠ Không tìm thấy nút "Chọn phiếu thủ công" sau 30 giây', 'warn')
+                log_cb('  ⚠ Không tìm thấy "Chọn phiếu thủ công" sau 3 lần thử — bỏ qua batch này', 'warn')
                 try:
                     page.screenshot(path=str(Path(output_dir) / f'debug_no_manual_btn_{carrier or "all"}_batch{batch_num}.png'))
                 except Exception:
