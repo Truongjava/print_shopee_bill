@@ -2209,6 +2209,17 @@ class App(QMainWindow):
         self._test_picking_list.setObjectName("resultList")
         gb1_layout.addWidget(self._test_picking_list)
 
+        # ── Chọn carrier cho báo cáo ──
+        carrier_row = QHBoxLayout()
+        carrier_row.setSpacing(8)
+        carrier_row.addWidget(QLabel("Đơn vị vận chuyển:"))
+        self.test_carrier_combo = QComboBox()
+        self.test_carrier_combo.addItems(list(CARRIER_URLS.keys()))
+        self.test_carrier_combo.setMinimumWidth(180)
+        carrier_row.addWidget(self.test_carrier_combo)
+        carrier_row.addStretch()
+        gb1_layout.addLayout(carrier_row)
+
         btn_calc = QPushButton("▶ Chạy tính toán")
         btn_calc.setObjectName("schedBtn")
         btn_calc.setCursor(Qt.PointingHandCursor)
@@ -2325,6 +2336,7 @@ class App(QMainWindow):
             try:
                 results = run_calculator(pdfs, out_dir, master, retail, template,
                                          lambda m, t='': self._test_log.emit(t, m),
+                                         carrier=self.test_carrier_combo.currentText(),
                                          send_api=self.test_send_api_cb.isChecked())
                 for r in results:
                     self._test_log.emit("ok", f"  ✓ {r['rows']} SKU | Qty={r['tong_qty']} | Sold={r['tong_sold']} | Promo={r['tong_promo']}")
@@ -2476,6 +2488,7 @@ class App(QMainWindow):
                 try:
                     results = run_calculator(picking_files, out_dir, master, retail, self._template_real,
                                              lambda m, t='': self._test_log.emit(t, m),
+                                             carrier=self.test_carrier_combo.currentText(),
                                              send_api=self.test_send_api_cb.isChecked())
                     for r in results:
                         self._test_log.emit("ok", f"  ✓ {r['rows']} SKU | Qty={r['tong_qty']} | Sold={r['tong_sold']} | Promo={r['tong_promo']}")
